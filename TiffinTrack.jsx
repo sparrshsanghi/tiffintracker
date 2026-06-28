@@ -1,0 +1,1218 @@
+import { useState, useMemo } from "react";
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+const TODAY     = new Date().toISOString().slice(0, 10);
+const CUR_MON   = TODAY.slice(0, 7);
+const TODAY_STR = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
+const DATE_STR  = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+const TODAY_IDX = (new Date().getDay() + 6) % 7;   // 0 = Mon … 6 = Sun
+const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+function getMonday(offset) {
+  var d = new Date(), day = d.getDay();
+  d.setDate(d.getDate() - day + (day === 0 ? -6 : 1) + (offset || 0) * 7);
+  return d.toISOString().slice(0, 10);
+}
+function weekDates(monday) {
+  return [0,1,2,3,4,5,6].map(function(i) {
+    var d = new Date(monday); d.setDate(d.getDate() + i); return d.toISOString().slice(0, 10);
+  });
+}
+function weekRange(monday) {
+  var ds = weekDates(monday);
+  return new Date(ds[0]).toLocaleDateString("en-IN",{day:"numeric",month:"short"}) + " – " +
+         new Date(ds[6]).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
+}
+function monLabel(key) {
+  var p = key.split("-");
+  return new Date(+p[0], +p[1]-1, 1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+}
+function prevMon(key) {
+  var p = key.split("-"), d = new Date(+p[0], +p[1]-2, 1);
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+}
+function nextMon(key) {
+  var p = key.split("-"), d = new Date(+p[0], +p[1], 1);
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+}
+
+var THIS_WEEK = getMonday(0);
+var fmt = function(n) { return "\u20B9" + Number(n).toLocaleString("en-IN"); };
+var waTo = function(ph, txt) { return "https://wa.me/91" + ph + "?text=" + encodeURIComponent(txt); };
+var makeOrders = function(cs) { return cs.filter(function(c){return c.active;}).map(function(c){return {id:c.id,status:"pending"};}); };
+var emptyWeek = function() { return [0,1,2,3,4,5,6].map(function(){return {items:[],note:""};});};
+
+// ─── Status config ────────────────────────────────────────────────────────────
+var DST = {
+  pending:   { label:"Pending",          badge:"bg-amber-100 text-amber-800", bar:"bg-amber-400",  next:"out"       },
+  out:       { label:"Out for Delivery", badge:"bg-blue-100 text-blue-800",   bar:"bg-blue-400",   next:"delivered" },
+  delivered: { label:"Delivered",        badge:"bg-green-100 text-green-800", bar:"bg-green-400",  next:null        },
+};
+var PST = {
+  paid:    { label:"Paid \u2713",  cls:"bg-green-100 text-green-800" },
+  partial: { label:"Partial", cls:"bg-amber-100 text-amber-800" },
+  unpaid:  { label:"Unpaid",  cls:"bg-red-100 text-red-700"     },
+};
+
+// ─── Seed data ────────────────────────────────────────────────────────────────
+var SEED_C = [
+  { id:1, name:"Priya Sharma",  phone:"9876543210", address:"Sector 5, Near Park",   plan:"monthly", food:"Veg Thali + Roti",      rate:2500, active:true },
+  { id:2, name:"Rahul Verma",   phone:"9812345678", address:"MG Road, Flat 3B",      plan:"daily",   food:"Dal Chawal + Sabzi",    rate:3000, active:true },
+  { id:3, name:"Anita Mehta",   phone:"9998887776", address:"Civil Lines, House 12", plan:"monthly", food:"2 Roti + Paneer Curry", rate:2200, active:true },
+];
+var SEED_P = {};
+SEED_P["1-"+CUR_MON] = [{id:1, amount:2500, date:"01 Jun", confirmed:true }];
+SEED_P["2-"+CUR_MON] = [{id:2, amount:1500, date:"03 Jun", confirmed:false}];
+var SEED_MENU = {};
+SEED_MENU[THIS_WEEK] = [
+  {items:["Dal Tadka","Rice","Roti x4","Aloo Gobi"],  note:""},
+  {items:["Rajma","Rice","Roti x4","Salad"],           note:""},
+  {items:["Chole","Puri","Rice"],                      note:"Puri day!"},
+  {items:["Palak Paneer","Rice","Roti x4"],            note:""},
+  {items:["Kadhi Pakora","Rice","Roti x4"],            note:""},
+  {items:["Chana Dal","Jeera Rice","Paratha x2"],      note:""},
+  {items:["Mix Veg","Dal","Rice","Roti x4","Kheer"],   note:"Sunday special"},
+];
+
+var INP = "w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-stone-50";
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AUTH SCREEN
+// ══════════════════════════════════════════════════════════════════════════════
+function AuthScreen(props) {
+  var icon=props.icon, title=props.title, subtitle=props.subtitle;
+  var hdr=props.hdr, btn=props.btn;
+  var value=props.value, onChange=props.onChange, error=props.error;
+  var onBack=props.onBack, onSubmit=props.onSubmit, hint=props.hint, isPhone=props.isPhone;
+  return (
+    <div className="min-h-screen bg-stone-50 flex flex-col" style={{fontFamily:"system-ui,sans-serif"}}>
+      <div className={hdr + " text-white px-4 pt-12 pb-8 text-center"}>
+        <div className="text-5xl mb-3">{icon}</div>
+        <h1 className="text-xl font-black">{title}</h1>
+        <p className="text-white/70 text-sm mt-1">{subtitle}</p>
+      </div>
+      <div className="flex-1 p-6 max-w-sm mx-auto w-full pt-8">
+        <input
+          className={"w-full border-2 rounded-2xl px-4 py-4 text-xl font-bold text-center focus:outline-none " + (error ? "border-red-300 bg-red-50" : "border-stone-200 bg-white")}
+          type={isPhone ? "tel" : "password"}
+          inputMode="numeric"
+          placeholder={isPhone ? "10-digit phone" : "Enter PIN"}
+          value={value}
+          onChange={function(e){onChange(e.target.value);}}
+          onKeyDown={function(e){if(e.key==="Enter")onSubmit();}}
+          maxLength={isPhone ? 10 : 8}
+          autoFocus
+        />
+        {error && <p className="text-red-500 text-sm text-center mt-2 font-semibold">{error}</p>}
+        {hint  && <p className="text-stone-400 text-xs text-center mt-2">{hint}</p>}
+        <button onClick={onSubmit} className={"mt-6 w-full py-4 text-white rounded-2xl font-black text-base " + btn}>
+          Continue →
+        </button>
+        <button onClick={onBack} className="mt-3 w-full py-3 text-stone-400 font-semibold text-sm">← Back</button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MENU PLANNER
+// ══════════════════════════════════════════════════════════════════════════════
+function MenuPlanner(props) {
+  var menu = props.menu, setMenuWeek = props.setMenuWeek;
+  var curWeek    = useState(THIS_WEEK);
+  var editDay    = useState(null);
+  var editItems  = useState("");
+  var editNote   = useState("");
+  var toast      = useState("");
+  // Unpack useState pairs
+  var wk=curWeek[0], setWk=curWeek[1];
+  var ed=editDay[0], setEd=editDay[1];
+  var ei=editItems[0], setEi=editItems[1];
+  var en=editNote[0], setEn=editNote[1];
+  var tk=toast[0], setTk=toast[1];
+
+  var dates    = weekDates(wk);
+  var weekData = menu[wk] || emptyWeek();
+  var isCur    = wk === THIS_WEEK;
+
+  function showToast(msg) { setTk(msg); setTimeout(function(){setTk("");}, 2500); }
+
+  function openEdit(i) {
+    var day = weekData[i] || {items:[],note:""};
+    setEd(i); setEi(day.items.join("\n")); setEn(day.note||"");
+  }
+
+  function saveEdit() {
+    var items = ei.split("\n").map(function(s){return s.trim();}).filter(function(s){return s.length>0;});
+    var updated = weekData.map(function(d,i){ return i===ed ? {items:items,note:en.trim()} : d; });
+    setMenuWeek(wk, updated);
+    setEd(null);
+    showToast("Saved!");
+  }
+
+  function clearDay(i) {
+    var updated = weekData.map(function(d,idx){ return idx===i ? {items:[],note:""} : d; });
+    setMenuWeek(wk, updated);
+  }
+
+  function copyLastWeek() {
+    var prev = getMonday(-1 + (wk===THIS_WEEK ? 0 : 0));
+    // compute the actual previous week relative to wk
+    var d = new Date(wk); d.setDate(d.getDate()-7); prev = d.toISOString().slice(0,10);
+    var prevData = menu[prev];
+    if (!prevData) { showToast("No menu found for last week"); return; }
+    setMenuWeek(wk, prevData.map(function(d){return {items:d.items.slice(),note:d.note};}));
+    showToast("Copied from last week!");
+  }
+
+  function buildWaMsg() {
+    var msg = "\uD83C\uDF71 *Weekly Menu*\n\uD83D\uDCC5 " + weekRange(wk) + "\n\n";
+    dates.forEach(function(date,i){
+      var day = weekData[i] || {items:[],note:""};
+      var dLbl = new Date(date).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
+      msg += "*" + DAYS[i] + " (" + dLbl + ")*\n";
+      msg += day.items.length>0 ? day.items.map(function(x){return "\u2022 "+x;}).join("\n") : "\u2022 (Not planned)";
+      if (day.note) msg += "\n\uD83D\uDCDD " + day.note;
+      msg += "\n\n";
+    });
+    return msg.trim();
+  }
+
+  var filled = weekData.filter(function(d){return d&&d.items.length>0;}).length;
+
+  return (
+    <div className="space-y-4">
+      {tk ? <div className="bg-green-600 text-white text-sm font-bold text-center py-2.5 rounded-2xl">{tk}</div> : null}
+
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+        <div className="flex items-center justify-between">
+          <button onClick={function(){setWk(function(w){var d=new Date(w);d.setDate(d.getDate()-7);return d.toISOString().slice(0,10);});setEd(null);}}
+            className="w-10 h-10 rounded-xl bg-stone-50 text-stone-600 font-black text-xl hover:bg-stone-100 flex items-center justify-center">&#8249;</button>
+          <div className="text-center">
+            <p className="font-black text-stone-800 text-sm">{weekRange(wk)}</p>
+            {isCur && <span className="text-xs text-orange-600 font-bold">Current Week</span>}
+          </div>
+          <button onClick={function(){setWk(function(w){var d=new Date(w);d.setDate(d.getDate()+7);return d.toISOString().slice(0,10);});setEd(null);}}
+            className="w-10 h-10 rounded-xl bg-stone-50 text-stone-600 font-black text-xl hover:bg-stone-100 flex items-center justify-center">&#8250;</button>
+        </div>
+        <div className="mt-3">
+          <div className="flex justify-between text-xs text-stone-400 mb-1"><span>Menu planned</span><span>{filled}/7 days</span></div>
+          <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-orange-400 to-amber-400 rounded-full transition-all" style={{width:Math.round(filled/7*100)+"%"}}></div>
+          </div>
+        </div>
+      </div>
+
+      {dates.map(function(date,i){
+        var isToday = isCur && i===TODAY_IDX;
+        var day = weekData[i] || {items:[],note:""};
+        var isEditing = ed===i;
+        var hasItems = day.items.length>0;
+        var dLabel = new Date(date).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
+        return (
+          <div key={date} className={"bg-white rounded-2xl shadow-sm border overflow-hidden " + (isToday?"border-orange-400":"border-stone-100")}>
+            {isToday && <div className="h-1 bg-orange-500"></div>}
+            <div className="p-4">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-black text-stone-800">{DAYS[i]}</p>
+                    {isToday && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-bold">Today</span>}
+                  </div>
+                  <p className="text-xs text-stone-400">{dLabel}</p>
+                </div>
+                {!isEditing && (
+                  <div className="flex gap-1.5">
+                    {hasItems && <button onClick={function(){clearDay(i);}} className="text-xs font-bold text-red-400 bg-red-50 px-2 py-1 rounded-lg">&#10005;</button>}
+                    <button onClick={function(){openEdit(i);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100">{hasItems?"Edit":"+ Add"}</button>
+                  </div>
+                )}
+              </div>
+              {!isEditing && (
+                hasItems ? (
+                  <div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {day.items.map(function(item,j){
+                        return <span key={j} className="bg-orange-50 text-orange-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-orange-100">{item}</span>;
+                      })}
+                    </div>
+                    {day.note && <p className="text-xs text-stone-400 mt-2">📝 {day.note}</p>}
+                  </div>
+                ) : <p className="text-xs text-stone-400 italic">No menu planned — tap + Add</p>
+              )}
+              {isEditing && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">Items — one per line</label>
+                    <textarea className={INP + " resize-none mt-1"} rows={5}
+                      placeholder={"Dal Tadka\nRice\nRoti x4\nAloo Gobi"}
+                      value={ei} onChange={function(e){setEi(e.target.value);}}></textarea>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">Note (optional)</label>
+                    <input className={INP + " mt-1"} placeholder="e.g. Special sweet today" value={en} onChange={function(e){setEn(e.target.value);}}/>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={function(){setEd(null);}} className="flex-1 py-2.5 border-2 border-stone-200 rounded-xl text-stone-500 font-bold text-sm">Cancel</button>
+                    <button onClick={saveEdit} className="flex-1 py-2.5 bg-orange-600 text-white rounded-xl font-black text-sm">Save</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="space-y-2 pt-2">
+        <a href={"https://wa.me/?text="+encodeURIComponent(buildWaMsg())} target="_blank" rel="noreferrer"
+          className="flex items-center justify-center gap-2 w-full py-3.5 bg-green-600 text-white rounded-2xl text-sm font-black hover:bg-green-700 shadow-sm">
+          Share Weekly Menu on WhatsApp
+        </a>
+        <button onClick={copyLastWeek} className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-2xl text-sm font-bold hover:bg-blue-100">
+          Copy Menu from Last Week
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DELIVERY VIEW
+// ══════════════════════════════════════════════════════════════════════════════
+function DeliveryView(props) {
+  var orders=props.orders, customers=props.customers, advance=props.advance;
+  var resetDay=props.resetDay, logout=props.logout, stats=props.stats;
+  return (
+    <div className="min-h-screen bg-blue-50" style={{fontFamily:"system-ui,sans-serif"}}>
+      <div className="bg-blue-600 text-white px-4 pt-5 pb-4 shadow-lg">
+        <div className="flex items-center justify-between max-w-lg mx-auto">
+          <div>
+            <div className="flex items-center gap-2"><span className="text-xl">🚴</span><span className="text-lg font-black">Delivery Mode</span></div>
+            <p className="text-blue-200 text-xs mt-0.5">{TODAY_STR}</p>
+          </div>
+          <div className="text-right">
+            <div className="flex items-baseline gap-0.5"><span className="text-3xl font-black">{stats.delivered}</span><span className="text-blue-300 font-semibold">/{stats.total}</span></div>
+            <p className="text-blue-200 text-xs">delivered</p>
+          </div>
+        </div>
+        <div className="mt-2 max-w-lg mx-auto">
+          <div className="h-1.5 bg-blue-800/40 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-blue-300 to-green-400 rounded-full transition-all" style={{width:stats.progress+"%"}}></div>
+          </div>
+        </div>
+      </div>
+      <div className="p-4 max-w-lg mx-auto space-y-3">
+        <div className="flex justify-between items-center">
+          <p className="text-sm font-bold text-stone-600">{orders.length} deliveries today</p>
+          <button onClick={resetDay} className="text-xs font-bold text-stone-500 bg-white border border-stone-200 px-3 py-1.5 rounded-full">Reset</button>
+        </div>
+        {orders.length===0 && <div className="text-center py-16 text-stone-400"><div className="text-5xl mb-3">🍽️</div><p className="font-semibold">No deliveries today</p></div>}
+        {orders.map(function(order){
+          var c = customers.find(function(x){return x.id===order.id;});
+          if(!c) return null;
+          var st = DST[order.status];
+          return (
+            <div key={order.id} className={"bg-white rounded-2xl shadow-sm border overflow-hidden " + (order.status==="delivered"?"border-green-200":"border-stone-100")}>
+              <div className={"h-1.5 "+st.bar}></div>
+              <div className="p-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 pr-2">
+                    <p className="font-black text-stone-800 text-base">{c.name}</p>
+                    <p className="text-xs text-stone-500 mt-1">📍 {c.address}</p>
+                    <p className="text-xs text-stone-500 mt-0.5">🍴 {c.food}</p>
+                  </div>
+                  <span className={"text-xs px-2.5 py-1 rounded-full font-bold flex-shrink-0 "+st.badge}>{st.label}</span>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  {st.next && <button onClick={function(){advance(order.id);}} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-black">Mark → {DST[st.next].label}</button>}
+                  <a href={waTo(c.phone,"Hi "+c.name+"! Your food is "+(order.status==="out"?"on the way 🚴":order.status==="delivered"?"delivered ✅":"being prepared 👩‍🍳")+" — thank you! 🙏")}
+                    target="_blank" rel="noreferrer"
+                    className={"py-2.5 px-4 bg-green-500 text-white rounded-xl text-sm font-black flex items-center gap-1.5 " + (!st.next?"flex-1 justify-center":"")}>
+                    WhatsApp
+                  </a>
+                </div>
+                {!st.next && <p className="mt-2 text-center text-green-600 text-sm font-bold">✓ Delivered</p>}
+              </div>
+            </div>
+          );
+        })}
+        <button onClick={logout} className="w-full py-3 text-stone-400 font-semibold text-sm mt-2">← Switch Role</button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CUSTOMER VIEW
+// ══════════════════════════════════════════════════════════════════════════════
+function CustomerView(props) {
+  var customer=props.customer, order=props.order, paid=props.paid;
+  var payStatus=props.payStatus, notifs=props.notifs, onRead=props.onRead;
+  var curMonLabel=props.curMonLabel, logout=props.logout;
+  var todayMenu=props.todayMenu, weekMenu=props.weekMenu;
+
+  var tabState = useState("home");
+  var tab = tabState[0], setTab = tabState[1];
+
+  if (!customer) {
+    return (
+      <div className="min-h-screen bg-green-50 flex flex-col items-center justify-center p-6 text-center" style={{fontFamily:"system-ui,sans-serif"}}>
+        <div className="text-5xl mb-3">😕</div>
+        <p className="font-black text-stone-700">Profile not found</p>
+        <button onClick={logout} className="mt-6 text-green-600 font-bold">← Go Back</button>
+      </div>
+    );
+  }
+
+  var delivSt = order ? DST[order.status] : null;
+  var paySt   = PST[payStatus] || PST.unpaid;
+  var unread  = notifs.filter(function(n){return !n.read;}).length;
+  var wDates  = weekDates(THIS_WEEK);
+
+  var tabs = [
+    {id:"home",    icon:"🏠", label:"Home"},
+    {id:"menu",    icon:"📋", label:"Menu"},
+    {id:"payment", icon:"💰", label:"Payment"},
+    {id:"alerts",  icon:"🔔", label: unread>0 ? "Alerts ("+unread+")" : "Alerts"},
+  ];
+
+  return (
+    <div className="min-h-screen bg-green-50" style={{fontFamily:"system-ui,sans-serif"}}>
+      <div className="bg-green-600 text-white px-4 pt-5 pb-4 shadow-lg">
+        <div className="flex items-center justify-between max-w-lg mx-auto">
+          <div>
+            <p className="text-green-200 text-xs">Welcome back</p>
+            <p className="text-xl font-black">{customer.name}</p>
+            <p className="text-green-200 text-xs mt-0.5">{TODAY_STR}</p>
+          </div>
+          <button onClick={logout} className="text-xs text-green-200 border border-green-400 px-3 py-1.5 rounded-full">Exit</button>
+        </div>
+      </div>
+
+      <div className="flex bg-white border-b border-stone-200 sticky top-0 z-20 shadow-sm">
+        {tabs.map(function(t){
+          return (
+            <button key={t.id}
+              onClick={function(){setTab(t.id); if(t.id==="alerts") onRead();}}
+              className={"flex-1 flex flex-col items-center py-2.5 text-xs font-semibold gap-0.5 " + (tab===t.id?"text-green-600 border-b-2 border-green-600":"text-stone-400 border-b-2 border-transparent")}>
+              <span className="text-base">{t.icon}</span>{t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="p-4 max-w-lg mx-auto space-y-4 pb-8">
+
+        {tab==="home" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">Today's Order</p>
+              <div className="flex items-start gap-3">
+                <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">🍱</div>
+                <div className="flex-1">
+                  <p className="font-black text-stone-800">{customer.food}</p>
+                  <p className="text-xs text-stone-400 mt-0.5 capitalize">{customer.plan} plan</p>
+                  {delivSt && <span className={"inline-block mt-2 text-xs px-2.5 py-1 rounded-full font-bold " + delivSt.badge}>{delivSt.label}</span>}
+                </div>
+              </div>
+              {order && order.status==="out" && <div className="mt-3 bg-blue-50 rounded-xl p-3 border border-blue-100"><p className="text-blue-700 text-sm font-bold">🚴 Your food is on the way!</p></div>}
+              {order && order.status==="delivered" && <div className="mt-3 bg-green-50 rounded-xl p-3 border border-green-100"><p className="text-green-700 text-sm font-bold">✅ Delivered! Enjoy your meal 🙏</p></div>}
+            </div>
+
+            {todayMenu && todayMenu.items.length>0 && (
+              <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+                <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">📋 Today's Menu</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {todayMenu.items.map(function(item,i){return <span key={i} className="bg-orange-50 text-orange-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-orange-100">{item}</span>;})}
+                </div>
+                {todayMenu.note && <p className="text-xs text-stone-400 mt-2">📝 {todayMenu.note}</p>}
+              </div>
+            )}
+
+            <div className={"rounded-2xl p-4 shadow-sm border " + (payStatus==="paid"?"bg-green-50 border-green-200":payStatus==="partial"?"bg-amber-50 border-amber-200":"bg-red-50 border-red-200")}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">{curMonLabel}</p>
+                  <p className={"text-2xl font-black mt-1 " + (payStatus==="paid"?"text-green-700":payStatus==="partial"?"text-amber-700":"text-red-700")}>{fmt(paid)}</p>
+                  <p className="text-xs text-stone-400 mt-0.5">{"paid" + (customer.rate?" of "+fmt(customer.rate):"")}</p>
+                </div>
+                <span className={"px-3 py-1.5 rounded-full text-sm font-black " + paySt.cls}>{paySt.label}</span>
+              </div>
+              <button onClick={function(){setTab("payment");}} className="mt-3 w-full py-2 text-sm font-bold text-stone-600 bg-white/70 border border-stone-200 rounded-xl">View Payment Details →</button>
+            </div>
+
+            {unread>0 && (
+              <button onClick={function(){setTab("alerts");onRead();}} className="w-full flex items-center gap-3 p-4 bg-green-600 text-white rounded-2xl font-bold">
+                <span className="text-xl">🔔</span>
+                <span>You have {unread} new notification{unread>1?"s":""}</span>
+                <span className="ml-auto">→</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {tab==="menu" && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">This Week's Menu</p>
+            {wDates.map(function(date,i){
+              var isToday = i===TODAY_IDX;
+              var day = weekMenu ? weekMenu[i] : null;
+              var hasItems = day && day.items.length>0;
+              var dLabel = new Date(date).toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"});
+              return (
+                <div key={date} className={"py-3 border-b border-stone-50 last:border-0" + (isToday?" bg-orange-50 -mx-4 px-4 rounded-xl":"")}>
+                  <div className="flex items-start gap-2">
+                    <div className={"text-xs font-black w-16 flex-shrink-0 pt-0.5 " + (isToday?"text-orange-600":"text-stone-400")}>{dLabel}</div>
+                    <div className="flex-1">
+                      {hasItems ? (
+                        <div>
+                          <div className="flex flex-wrap gap-1">
+                            {day.items.map(function(item,j){return <span key={j} className={"text-xs font-semibold px-2 py-0.5 rounded-full " + (isToday?"bg-orange-100 text-orange-700":"bg-stone-100 text-stone-600")}>{item}</span>;})}
+                          </div>
+                          {day.note && <p className="text-xs text-stone-400 mt-1">📝 {day.note}</p>}
+                        </div>
+                      ) : <p className="text-xs text-stone-400 italic">Not planned</p>}
+                    </div>
+                    {isToday && <span className="text-xs bg-orange-500 text-white px-1.5 py-0.5 rounded font-bold flex-shrink-0">Today</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==="payment" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">{curMonLabel}</p>
+              <div className="flex items-end justify-between mb-3">
+                <div>
+                  <p className="text-3xl font-black text-stone-800">{fmt(paid)}</p>
+                  <p className="text-xs text-stone-400">{"paid" + (customer.rate?" of "+fmt(customer.rate):"")}</p>
+                </div>
+                <span className={"px-3 py-1.5 rounded-full text-sm font-black " + paySt.cls}>{paySt.label}</span>
+              </div>
+              {customer.rate>0 && <div className="h-2 bg-stone-100 rounded-full overflow-hidden mb-4"><div className="h-full bg-green-400 rounded-full" style={{width:Math.min(100,Math.round(paid/customer.rate*100))+"%"}}></div></div>}
+              {customer.rate>paid ? (
+                <a href={waTo(customer.phone,"Hi! I've paid "+fmt(customer.rate-paid)+" for "+curMonLabel+". Please confirm.\n— "+customer.name+" ("+customer.phone+")")}
+                  target="_blank" rel="noreferrer"
+                  className="flex items-center justify-center gap-2 w-full py-3 bg-green-600 text-white rounded-xl text-sm font-black">
+                  Send "I've Paid" to Owner
+                </a>
+              ) : customer.rate>0 ? <div className="text-center py-3 text-green-600 font-black text-sm bg-green-50 rounded-xl">✅ Fully paid this month!</div> : null}
+            </div>
+          </div>
+        )}
+
+        {tab==="alerts" && (
+          notifs.length===0 ? (
+            <div className="text-center py-16 text-stone-400"><div className="text-4xl mb-3">🔔</div><p className="font-semibold">No notifications yet</p></div>
+          ) : (
+            <div className="space-y-3">
+              {notifs.map(function(n){
+                return (
+                  <div key={n.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (!n.read?"border-green-200 bg-green-50/60":"border-stone-100")}>
+                    <div className="flex gap-3 items-start">
+                      <span className="text-2xl flex-shrink-0">{n.icon}</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-stone-800">{n.msg}</p>
+                        <p className="text-xs text-stone-400 mt-1">{n.date}</p>
+                      </div>
+                      {!n.read && <span className="w-2.5 h-2.5 bg-green-500 rounded-full flex-shrink-0 mt-1"></span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MANAGER VIEW
+// ══════════════════════════════════════════════════════════════════════════════
+function ManagerView(props) {
+  var customers=props.customers, setCustomers=props.setCustomers;
+  var orders=props.orders, setOrders=props.setOrders;
+  var payments=props.payments, menu=props.menu, setMenuWeek=props.setMenuWeek;
+  var stats=props.stats, payStats=props.payStats;
+  var getPaid=props.getPaid, getPayStat=props.getPayStat;
+  var addPayment=props.addPayment, removePayment=props.removePayment;
+  var resetDay=props.resetDay, advanceStatus=props.advanceStatus;
+  var curMonth=props.curMonth, delivPin=props.delivPin;
+  var setDelivPin=props.setDelivPin, mgrPin=props.mgrPin, setMgrPin=props.setMgrPin;
+  var logout=props.logout;
+
+  var tabS=useState("dashboard"); var tab=tabS[0],setTab=tabS[1];
+  var pmS=useState(curMonth); var payMonth=pmS[0],setPayMonth=pmS[1];
+  var pfS=useState("all"); var payFilter=pfS[0],setPayFilter=pfS[1];
+  var paS=useState({}); var payAmt=paS[0],setPayAmt=paS[1];
+  var spS=useState({}); var showPart=spS[0],setShowPart=spS[1];
+  var sfS=useState(false); var showForm=sfS[0],setShowForm=sfS[1];
+  var eiS=useState(null); var editId=eiS[0],setEditId=eiS[1];
+  var fmS=useState({name:"",phone:"",address:"",plan:"daily",food:"",rate:""}); var form=fmS[0],setForm=fmS[1];
+  var srS=useState(""); var search=srS[0],setSearch=srS[1];
+  var cpS=useState(false); var copied=cpS[0],setCopied=cpS[1];
+  var ndS=useState(delivPin); var newDP=ndS[0],setNewDP=ndS[1];
+  var nmS=useState(""); var newMP=nmS[0],setNewMP=nmS[1];
+  var psS=useState(false); var pinSaved=psS[0],setPinSaved=psS[1];
+  var dcS=useState(null); var delConfirm=dcS[0],setDelConfirm=dcS[1];
+
+  var pmStats = useMemo(function(){
+    var active=customers.filter(function(c){return c.active&&c.rate>0;});
+    var due=0,col=0,nP=0,nPart=0,nU=0;
+    active.forEach(function(c){
+      var p=getPaid(c.id,payMonth); due+=c.rate; col+=Math.min(p,c.rate);
+      var s=getPayStat(c.id,payMonth,c.rate);
+      if(s==="paid")nP++; else if(s==="partial")nPart++; else nU++;
+    });
+    return {due:due,col:col,nP:nP,nPart:nPart,nU:nU,pct:due>0?Math.round(col/due*100):0};
+  }, [customers, payments, payMonth]);
+
+  var payC = useMemo(function(){
+    var active=customers.filter(function(c){return c.active&&c.rate>0;});
+    if(payFilter==="all") return active;
+    return active.filter(function(c){return getPayStat(c.id,payMonth,c.rate)===payFilter;});
+  }, [customers, payments, payMonth, payFilter]);
+
+  var filteredC = customers.filter(function(c){
+    var q=search.toLowerCase();
+    return c.name.toLowerCase().includes(q)||c.phone.includes(search)||c.address.toLowerCase().includes(q);
+  });
+
+  var summaryMsg = "🍱 *Delivery Update – "+TODAY_STR+"*\n\n✅ Delivered: "+stats.delivered+"/"+stats.total+"\n🚴 On the way: "+stats.out+"\n⏳ Pending: "+stats.pending+"\n\nThank you for your trust! 🙏";
+
+  function openAdd() { setEditId(null); setForm({name:"",phone:"",address:"",plan:"daily",food:"",rate:""}); setShowForm(true); }
+  function openEdit(c) { setEditId(c.id); setForm({name:c.name,phone:c.phone,address:c.address,plan:c.plan,food:c.food,rate:String(c.rate||"")}); setShowForm(true); }
+
+  function save() {
+    if(!form.name.trim()) return;
+    var rate = parseInt(form.rate)||0;
+    if(editId) {
+      setCustomers(customers.map(function(c){ return c.id===editId?Object.assign({},c,form,{rate:rate}):c; }));
+    } else {
+      var nc = Object.assign({},form,{rate:rate,id:Date.now(),active:true});
+      var updated = customers.concat([nc]);
+      setCustomers(updated);
+      setOrders(makeOrders(updated).map(function(no){ return orders.find(function(o){return o.id===no.id;})||no; }));
+    }
+    setShowForm(false);
+  }
+
+  function togglePause(c) {
+    setCustomers(customers.map(function(x){ return x.id===c.id?Object.assign({},x,{active:!x.active}):x; }));
+    if(c.active) setOrders(orders.filter(function(o){return o.id!==c.id;}));
+    else setOrders(orders.concat([{id:c.id,status:"pending"}]));
+  }
+
+  function confirmDel(id) {
+    if(delConfirm===id) {
+      setCustomers(customers.filter(function(c){return c.id!==id;}));
+      setOrders(orders.filter(function(o){return o.id!==id;}));
+      setDelConfirm(null);
+    } else {
+      setDelConfirm(id);
+      setTimeout(function(){setDelConfirm(null);},3000);
+    }
+  }
+
+  function confirmFull(cid) {
+    var c=customers.find(function(x){return x.id===cid;}); if(!c||!c.rate) return;
+    var rem=c.rate-getPaid(cid,payMonth); if(rem>0) addPayment(cid,rem,true);
+  }
+
+  function confirmPartial(cid) {
+    var amt=payAmt[cid]; if(!amt||isNaN(+amt)||+amt<=0) return;
+    addPayment(cid,+amt,true);
+    setShowPart(function(p){ var n=Object.assign({},p); n[cid]=false; return n; });
+    setPayAmt(function(p){ var n=Object.assign({},p); n[cid]=""; return n; });
+  }
+
+  function savePins() {
+    if(newDP.length>=3) setDelivPin(newDP);
+    if(newMP.length>=4) setMgrPin(newMP);
+    setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000);
+  }
+
+  var todayMenuData = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
+
+  var TABS = [
+    {id:"dashboard",icon:"📊",label:"Overview"},
+    {id:"orders",   icon:"🚴",label:"Delivery"},
+    {id:"customers",icon:"👥",label:"Customers"},
+    {id:"payments", icon:"💰",label:"Payments"},
+    {id:"menu",     icon:"📋",label:"Menu"},
+    {id:"settings", icon:"⚙️", label:"Settings"},
+  ];
+
+  return (
+    <div className="min-h-screen bg-orange-50" style={{fontFamily:"system-ui,sans-serif"}}>
+      <div className="bg-orange-600 text-white px-4 pt-5 pb-4 shadow-lg">
+        <div className="flex items-center justify-between max-w-lg mx-auto">
+          <div>
+            <div className="flex items-center gap-2"><span className="text-2xl">🍱</span><span className="text-xl font-black">TiffinTrack</span></div>
+            <p className="text-orange-200 text-xs mt-0.5">{TODAY_STR}</p>
+          </div>
+          <div className="text-right">
+            <div className="flex items-baseline gap-0.5"><span className="text-4xl font-black">{stats.delivered}</span><span className="text-orange-300 text-xl font-semibold">/{stats.total}</span></div>
+            <p className="text-orange-200 text-xs">delivered</p>
+          </div>
+        </div>
+        <div className="mt-3 max-w-lg mx-auto">
+          <div className="h-2 bg-orange-800/40 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-amber-300 to-green-400 rounded-full transition-all duration-700" style={{width:stats.progress+"%"}}></div>
+          </div>
+          <div className="flex justify-between text-orange-300 text-xs mt-1">
+            <span>{stats.progress}% complete</span>
+            <span>{stats.out>0?stats.out+" on the way · ":""}{stats.pending} pending</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex bg-white border-b border-stone-200 sticky top-0 z-20 shadow-sm">
+        {TABS.map(function(t){
+          return (
+            <button key={t.id} onClick={function(){setTab(t.id);}}
+              className={"flex-1 flex flex-col items-center py-2 text-[10px] font-semibold gap-0.5 " + (tab===t.id?"text-orange-600 border-b-2 border-orange-600":"text-stone-400 border-b-2 border-transparent")}>
+              <span className="text-sm">{t.icon}</span>{t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="p-4 max-w-lg mx-auto pb-8">
+
+        {tab==="dashboard" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                {label:"Monthly",  value:stats.monthly,            icon:"📅",grad:"from-purple-500 to-violet-600"},
+                {label:"Daily",    value:stats.daily,              icon:"🔄",grad:"from-blue-500 to-cyan-600"},
+                {label:"Delivered",value:stats.delivered,          icon:"✅",grad:"from-green-500 to-emerald-600"},
+                {label:"Remaining",value:stats.pending+stats.out,  icon:"⏳",grad:"from-amber-500 to-orange-600"},
+              ].map(function(s){
+                return (
+                  <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 flex items-center gap-3">
+                    <div className={"w-10 h-10 rounded-xl bg-gradient-to-br "+s.grad+" flex items-center justify-center text-lg flex-shrink-0"}>{s.icon}</div>
+                    <div>
+                      <div className="text-3xl font-black text-stone-800 leading-none">{s.value}</div>
+                      <div className="text-xs text-stone-500 font-medium mt-0.5">{s.label}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {todayMenuData && todayMenuData.items.length>0 && (
+              <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+                <div className="flex justify-between items-center mb-2">
+                  <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">Today's Menu</p>
+                  <button onClick={function(){setTab("menu");}} className="text-xs text-orange-600 font-bold">Edit →</button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {todayMenuData.items.map(function(item,i){return <span key={i} className="bg-orange-50 text-orange-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-orange-100">{item}</span>;})}
+                </div>
+                {todayMenuData.note && <p className="text-xs text-stone-400 mt-2">📝 {todayMenuData.note}</p>}
+              </div>
+            )}
+
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">This Month</p>
+                  <p className="text-2xl font-black text-stone-800 mt-1">{fmt(payStats.collected)}</p>
+                  <p className="text-xs text-stone-400">of {fmt(payStats.due)}</p>
+                </div>
+                <div className="flex gap-2">
+                  <div className="text-center bg-green-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-green-700">{payStats.nPaid}</div><div className="text-xs text-green-600 font-bold">Paid</div></div>
+                  <div className="text-center bg-red-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-red-700">{payStats.nUnpaid}</div><div className="text-xs text-red-600 font-bold">Unpaid</div></div>
+                </div>
+              </div>
+              <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-green-400 to-emerald-500 rounded-full" style={{width:payStats.pct+"%"}}></div>
+              </div>
+              <p className="text-xs text-stone-400 mt-1 mb-3">{payStats.pct}% · {fmt(payStats.due-payStats.collected)} pending</p>
+              <button onClick={function(){setTab("payments");}} className="w-full py-2 bg-orange-50 text-orange-700 rounded-xl text-sm font-bold">Manage Payments →</button>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">Quick Actions</p>
+              <div className="space-y-2">
+                {[
+                  {label:"Update delivery statuses",icon:"🚴",cls:"bg-orange-50 text-orange-700",fn:function(){setTab("orders");}},
+                  {label:"Plan this week's menu",   icon:"📋",cls:"bg-amber-50 text-amber-700",  fn:function(){setTab("menu");}},
+                  {label:"Add new customer",        icon:"➕",cls:"bg-green-50 text-green-700",  fn:openAdd},
+                  {label:"Reset for new day",       icon:"🔄",cls:"bg-blue-50 text-blue-700",    fn:resetDay},
+                ].map(function(a){
+                  return (
+                    <button key={a.label} onClick={a.fn} className={"w-full flex items-center gap-3 px-4 py-3 "+a.cls+" rounded-xl text-sm font-semibold"}>
+                      <span>{a.icon}</span>{a.label}<span className="ml-auto opacity-40">→</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <p className="font-bold text-stone-700 text-sm mb-2">💬 WhatsApp Summary</p>
+              <div className="bg-stone-50 rounded-xl p-3 text-xs text-stone-600 font-mono whitespace-pre-wrap border border-stone-200">{summaryMsg}</div>
+              <button onClick={function(){navigator.clipboard&&navigator.clipboard.writeText(summaryMsg);setCopied(true);setTimeout(function(){setCopied(false);},2000);}}
+                className={"mt-3 w-full py-3 rounded-xl text-sm font-black text-white " + (copied?"bg-green-500":"bg-green-500")}>
+                {copied?"✓ Copied!":"Copy Message"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab==="orders" && (
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <p className="text-sm font-bold text-stone-600">{orders.length} deliveries today</p>
+              <button onClick={resetDay} className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full">Reset Day</button>
+            </div>
+            {orders.length===0 && <div className="text-center py-16 text-stone-400"><div className="text-5xl mb-3">🍽️</div><p className="font-semibold">No deliveries today</p></div>}
+            {orders.map(function(order){
+              var c=customers.find(function(x){return x.id===order.id;}); if(!c) return null;
+              var st=DST[order.status];
+              return (
+                <div key={order.id} className={"bg-white rounded-2xl shadow-sm border overflow-hidden " + (order.status==="delivered"?"border-green-200":"border-stone-100")}>
+                  <div className={"h-1.5 "+st.bar}></div>
+                  <div className="p-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1 pr-2">
+                        <p className="font-black text-stone-800 text-base">{c.name}</p>
+                        <p className="text-xs text-stone-500 mt-1">📍 {c.address}</p>
+                        <p className="text-xs text-stone-500 mt-0.5">🍴 {c.food}</p>
+                      </div>
+                      <span className={"text-xs px-2.5 py-1 rounded-full font-bold flex-shrink-0 "+st.badge}>{st.label}</span>
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      {st.next && <button onClick={function(){advanceStatus(order.id);}} className="flex-1 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-black">Mark → {DST[st.next].label}</button>}
+                      <a href={waTo(c.phone,"Hi "+c.name+"! Your food is "+(order.status==="out"?"on the way 🚴":order.status==="delivered"?"delivered ✅":"being prepared 👩‍🍳")+" — thank you! 🙏")}
+                        target="_blank" rel="noreferrer"
+                        className={"py-2.5 px-4 bg-green-500 text-white rounded-xl text-sm font-black flex items-center gap-1.5 "+(st.next?"":"flex-1 justify-center")}>
+                        💬 WhatsApp
+                      </a>
+                    </div>
+                    {!st.next && <p className="mt-2 text-center text-green-600 text-sm font-bold">✓ Delivered</p>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==="customers" && (
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <p className="text-sm font-bold text-stone-600">{customers.length} customers</p>
+              <button onClick={openAdd} className="bg-orange-600 text-white px-4 py-2 rounded-full text-sm font-black">+ Add</button>
+            </div>
+            <input className={INP} placeholder="🔍  Search…" value={search} onChange={function(e){setSearch(e.target.value);}}/>
+            {filteredC.map(function(c){
+              return (
+                <div key={c.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (c.active?"border-stone-100":"border-stone-200 opacity-60")}>
+                  <div className="flex gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <p className="font-black text-stone-800">{c.name}</p>
+                        <span className={"text-xs px-2 py-0.5 rounded-full font-bold " + (c.plan==="monthly"?"bg-purple-100 text-purple-700":"bg-blue-100 text-blue-700")}>{c.plan}</span>
+                        {!c.active && <span className="text-xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">paused</span>}
+                      </div>
+                      <p className="text-xs text-stone-500 mt-1">📞 {c.phone}</p>
+                      <p className="text-xs text-stone-500 mt-0.5">📍 {c.address}</p>
+                      <p className="text-xs text-stone-500 mt-0.5">🍴 {c.food}</p>
+                      {c.rate>0?<p className="text-xs text-orange-600 font-bold mt-1">💰 {fmt(c.rate)}/month</p>:<p className="text-xs text-red-400 font-semibold mt-1">⚠️ No rate set</p>}
+                    </div>
+                    <div className="flex flex-col gap-1.5 flex-shrink-0">
+                      <button onClick={function(){openEdit(c);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg">Edit</button>
+                      <button onClick={function(){togglePause(c);}} className={"text-xs font-bold px-2.5 py-1 rounded-lg " + (c.active?"text-amber-600 bg-amber-50":"text-green-600 bg-green-50")}>{c.active?"Pause":"Resume"}</button>
+                      <button onClick={function(){confirmDel(c.id);}} className={"text-xs font-bold px-2.5 py-1 rounded-lg " + (delConfirm===c.id?"bg-red-600 text-white":"text-red-500 bg-red-50")}>{delConfirm===c.id?"Sure?":"Delete"}</button>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <a href={"tel:+91"+c.phone} className="flex-1 text-center py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-bold text-stone-600">📞 Call</a>
+                    <a href={waTo(c.phone,"Hi "+c.name+"!")} target="_blank" rel="noreferrer" className="flex-1 text-center py-2 bg-green-50 border border-green-200 rounded-xl text-xs font-bold text-green-600">💬 WhatsApp</a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==="payments" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={function(){setPayMonth(prevMon(payMonth));}} className="w-10 h-10 rounded-xl bg-stone-50 text-stone-600 font-black text-xl flex items-center justify-center">&#8249;</button>
+                <div className="text-center">
+                  <p className="font-black text-stone-800">{monLabel(payMonth)}</p>
+                  {payMonth===curMonth && <span className="text-xs text-orange-600 font-bold">Current Month</span>}
+                </div>
+                <button onClick={function(){if(payMonth<curMonth)setPayMonth(nextMon(payMonth));}} className={"w-10 h-10 rounded-xl font-black text-xl flex items-center justify-center " + (payMonth>=curMonth?"bg-stone-50 text-stone-300 cursor-not-allowed":"bg-stone-50 text-stone-600")}>&#8250;</button>
+              </div>
+              <div className="flex items-end justify-between">
+                <div><p className="text-3xl font-black text-stone-800">{fmt(pmStats.col)}</p><p className="text-xs text-stone-400">of {fmt(pmStats.due)}</p></div>
+                <div className="flex gap-2">
+                  <div className="text-center bg-green-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-green-700">{pmStats.nP}</div><div className="text-xs text-green-600 font-bold">Paid</div></div>
+                  {pmStats.nPart>0&&<div className="text-center bg-amber-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-amber-700">{pmStats.nPart}</div><div className="text-xs text-amber-600 font-bold">Part</div></div>}
+                  <div className="text-center bg-red-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-red-700">{pmStats.nU}</div><div className="text-xs text-red-600 font-bold">Unpaid</div></div>
+                </div>
+              </div>
+              <div className="mt-3 h-2.5 bg-stone-100 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-green-400 to-emerald-500 rounded-full" style={{width:pmStats.pct+"%"}}></div></div>
+              <p className="text-xs text-stone-400 mt-1 text-right">{pmStats.pct}% · {fmt(pmStats.due-pmStats.col)} remaining</p>
+            </div>
+            <div className="flex gap-2">
+              {["all","unpaid","partial","paid"].map(function(f){
+                return <button key={f} onClick={function(){setPayFilter(f);}} className={"flex-1 py-2 rounded-xl text-xs font-bold capitalize " + (payFilter===f?"bg-orange-600 text-white":"bg-white text-stone-500 border border-stone-200")}>{f}</button>;
+              })}
+            </div>
+            {payC.map(function(c){
+              var paid=getPaid(c.id,payMonth);
+              var remaining=Math.max(0,c.rate-paid);
+              var pst=PST[getPayStat(c.id,payMonth,c.rate)]||PST.unpaid;
+              var records=payments[c.id+"-"+payMonth]||[];
+              var isCur=payMonth===curMonth;
+              return (
+                <div key={c.id} className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
+                  <div className="p-4">
+                    <div className="flex justify-between items-start">
+                      <div><p className="font-black text-stone-800 text-base">{c.name}</p><p className="text-xs text-stone-400">{c.plan} · {fmt(c.rate)}/month</p></div>
+                      <span className={"text-xs px-2.5 py-1 rounded-full font-black "+pst.cls}>{pst.label}</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="flex justify-between text-xs mb-1.5"><span className="font-bold text-stone-600">Paid: {fmt(paid)}</span>{remaining>0&&<span className="font-bold text-red-500">Due: {fmt(remaining)}</span>}</div>
+                      <div className="h-2 bg-stone-100 rounded-full overflow-hidden"><div className="h-full bg-green-400 rounded-full" style={{width:Math.min(100,Math.round(paid/c.rate*100))+"%"}}></div></div>
+                    </div>
+                    {records.length>0 && (
+                      <div className="mt-3 space-y-1.5">
+                        {records.map(function(r){
+                          return (
+                            <div key={r.id} className={"flex justify-between items-center rounded-xl px-3 py-2 border " + (r.confirmed?"bg-green-50 border-green-100":"bg-stone-50 border-stone-100")}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-black text-stone-700">{fmt(r.amount)}</span>
+                                {r.confirmed?<span className="text-xs text-green-600 font-bold">✓ Confirmed</span>:<span className="text-xs text-stone-400">Unconfirmed</span>}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-stone-400">{r.date}</span>
+                                {isCur&&<button onClick={function(){removePayment(c.id,r.id);}} className="text-xs text-red-400 font-bold">✕</button>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {isCur && remaining>0 && (
+                      <div className="mt-3 space-y-2">
+                        <div className="flex gap-2">
+                          <button onClick={function(){confirmFull(c.id);}} className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-black">✓ Confirm & Notify ({fmt(remaining)})</button>
+                          <button onClick={function(){setShowPart(function(p){var n=Object.assign({},p);n[c.id]=!p[c.id];return n;});}} className="px-4 py-2.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-sm font-bold">Partial</button>
+                        </div>
+                        {showPart[c.id] && (
+                          <div className="flex gap-2">
+                            <input className="flex-1 border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-stone-50"
+                              placeholder={"Amount (max "+fmt(remaining)+")"} inputMode="numeric"
+                              value={payAmt[c.id]||""}
+                              onChange={function(e){var v=e.target.value;setPayAmt(function(p){var n=Object.assign({},p);n[c.id]=v;return n;});}}/>
+                            <button onClick={function(){confirmPartial(c.id);}} className="px-5 bg-green-600 text-white rounded-xl text-sm font-black">Save</button>
+                          </div>
+                        )}
+                        <a href={waTo(c.phone,"Hi "+c.name+" ji! 🙏\nGentle reminder — payment of "+fmt(remaining)+" for "+monLabel(payMonth)+" is pending.\nPlease pay when convenient. Thank you!")}
+                          target="_blank" rel="noreferrer"
+                          className="flex items-center justify-center gap-2 w-full py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs font-bold text-stone-600">
+                          💬 Send Reminder on WhatsApp
+                        </a>
+                      </div>
+                    )}
+                    {remaining<=0&&paid>0&&<div className="mt-3 py-2 text-center text-green-600 text-sm font-black bg-green-50 rounded-xl">✅ Fully paid · Customer notified</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==="menu" && <MenuPlanner menu={menu} setMenuWeek={setMenuWeek}/>}
+
+        {tab==="settings" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-4">Access PINs</p>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-stone-500 uppercase">Delivery PIN</label>
+                  <p className="text-xs text-stone-400 mb-1.5">Share with your delivery person</p>
+                  <div className="flex gap-2">
+                    <input className={"flex-1 "+INP} placeholder="New delivery PIN" inputMode="numeric" value={newDP} onChange={function(e){setNewDP(e.target.value);}} maxLength={6}/>
+                    <div className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-2.5 rounded-xl whitespace-nowrap">Now: {delivPin}</div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-stone-500 uppercase">Change Manager PIN</label>
+                  <p className="text-xs text-stone-400 mb-1.5">Leave blank to keep current</p>
+                  <input className={INP} placeholder="New 4+ digit PIN" type="password" inputMode="numeric" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={8}/>
+                </div>
+              </div>
+              <button onClick={savePins} className={"mt-4 w-full py-3 rounded-xl text-sm font-black " + (pinSaved?"bg-green-500 text-white":"bg-orange-600 text-white")}>{pinSaved?"✓ Saved!":"Save PINs"}</button>
+            </div>
+            <button onClick={logout} className="w-full py-3 text-stone-400 font-semibold text-sm">← Switch Role</button>
+          </div>
+        )}
+      </div>
+
+      {showForm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={function(e){if(e.target===e.currentTarget)setShowForm(false);}}>
+          <div className="bg-white rounded-t-3xl p-5 w-full max-w-lg mx-auto max-h-[90vh] overflow-y-auto">
+            <div className="w-12 h-1.5 bg-stone-200 rounded-full mx-auto mb-4"></div>
+            <h2 className="text-lg font-black text-stone-800 mb-4">{editId?"✏️ Edit Customer":"➕ New Customer"}</h2>
+            <div className="space-y-3">
+              {[
+                {k:"name",   l:"Name *",          p:"Full name",               m:"text"},
+                {k:"phone",  l:"Phone",            p:"10-digit mobile",         m:"numeric"},
+                {k:"address",l:"Address",          p:"Delivery address",        m:"text"},
+                {k:"food",   l:"Food Order",       p:"e.g. Veg Thali, Dal Rice",m:"text"},
+                {k:"rate",   l:"Monthly Rate (₹)", p:"e.g. 2500",             m:"numeric"},
+              ].map(function(f){
+                return (
+                  <div key={f.k}>
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">{f.l}</label>
+                    <input className={INP+" mt-1"} placeholder={f.p} inputMode={f.m} value={form[f.k]}
+                      onChange={function(e){var v=e.target.value;setForm(function(p){var n=Object.assign({},p);n[f.k]=v;return n;});}}/>
+                  </div>
+                );
+              })}
+              <div>
+                <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">Plan Type</label>
+                <div className="flex gap-2 mt-1">
+                  {["daily","monthly"].map(function(pl){
+                    return (
+                      <button key={pl} onClick={function(){setForm(function(p){return Object.assign({},p,{plan:pl});});}}
+                        className={"flex-1 py-3 rounded-xl text-sm font-black border-2 transition-colors " + (form.plan===pl?(pl==="daily"?"bg-blue-600 text-white border-blue-600":"bg-purple-600 text-white border-purple-600"):"bg-white text-stone-400 border-stone-200")}>
+                        {pl==="daily"?"🔄 Daily":"📅 Monthly"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={function(){setShowForm(false);}} className="flex-1 py-3.5 border-2 border-stone-200 rounded-2xl text-stone-600 font-bold">Cancel</button>
+              <button onClick={save} className="flex-1 py-3.5 bg-orange-600 text-white rounded-2xl font-black disabled:opacity-40">{editId?"Save Changes":"Add Customer"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// APP
+// ══════════════════════════════════════════════════════════════════════════════
+export default function App() {
+  var scrS=useState("roleSelect"); var screen=scrS[0],setScreen=scrS[1];
+  var roleS=useState(null); var role=roleS[0],setRole=roleS[1];
+  var cS=useState(SEED_C); var cust=cS[0],setCust=cS[1];
+  var oS=useState(function(){return makeOrders(SEED_C);}); var ords=oS[0],setOrds=oS[1];
+  var pS=useState(SEED_P); var pays=pS[0],setPays=pS[1];
+  var mS=useState(SEED_MENU); var menu=mS[0],setMenu=mS[1];
+  var dpS=useState("1234"); var delivPin=dpS[0],setDelivPin=dpS[1];
+  var mpS=useState("0000"); var mgrPin=mpS[0],setMgrPin=mpS[1];
+  var nS=useState({}); var notifs=nS[0],setNotifs=nS[1];
+  var cpS=useState(""); var custPhone=cpS[0],setCustPhone=cpS[1];
+
+  var miS=useState(""); var mgrInput=miS[0],setMgrInput=miS[1];
+  var meS=useState(false); var mgrErr=meS[0],setMgrErr=meS[1];
+  var piS=useState(""); var pinInput=piS[0],setPinInput=piS[1];
+  var peS=useState(false); var pinErr=peS[0],setPinErr=peS[1];
+  var phiS=useState(""); var phoneInput=phiS[0],setPhoneInput=phiS[1];
+  var pheS=useState(false); var phonErr=pheS[0],setPhonErr=pheS[1];
+
+  function pushNotif(phone, notif) {
+    setNotifs(function(prev){
+      var prev2 = Object.assign({}, prev);
+      var arr = (prev2[phone]||[]).slice();
+      arr.unshift(Object.assign({}, notif, {id:Date.now(), read:false, date:DATE_STR}));
+      prev2[phone] = arr.slice(0,30);
+      return prev2;
+    });
+  }
+
+  function loginMgr() {
+    if(mgrInput!==mgrPin){setMgrErr(true);return;}
+    setMgrErr(false);setMgrInput("");setRole("manager");setScreen("app");
+  }
+  function loginDel() {
+    if(pinInput!==delivPin){setPinErr(true);return;}
+    setPinErr(false);setPinInput("");setRole("delivery");setScreen("app");
+  }
+  function loginCust() {
+    var ph=phoneInput.trim();
+    var c=cust.find(function(x){return x.phone===ph;});
+    if(!c){setPhonErr(true);return;}
+    setPhonErr(false);setCustPhone(ph);setRole("customer");setScreen("app");
+  }
+  function logout() {
+    setRole(null);setScreen("roleSelect");
+    setPhoneInput("");setCustPhone("");setPinInput("");setMgrInput("");
+    setMgrErr(false);setPinErr(false);setPhonErr(false);
+  }
+
+  function advanceStatus(id) {
+    var updated = ords.map(function(o){
+      if(o.id!==id) return o;
+      var next=DST[o.status].next;
+      return next?Object.assign({},o,{status:next}):o;
+    });
+    setOrds(updated);
+    var c=cust.find(function(x){return x.id===id;});
+    var ns=updated.find(function(o){return o.id===id;}); ns=ns&&ns.status;
+    if(c&&ns==="out")       pushNotif(c.phone,{type:"delivery",msg:"Your food is on the way! Should arrive shortly.",icon:"🚴"});
+    if(c&&ns==="delivered") pushNotif(c.phone,{type:"delivery",msg:"Your food has been delivered! Enjoy your meal.",icon:"✅"});
+  }
+  function resetDay() { setOrds(makeOrders(cust)); }
+
+  function getPaid(cid,mon) { return (pays[cid+"-"+mon]||[]).reduce(function(s,r){return s+r.amount;},0); }
+  function getPayStat(cid,mon,rate) {
+    if(!rate) return "unpaid";
+    var p=getPaid(cid,mon);
+    return p<=0?"unpaid":p>=rate?"paid":"partial";
+  }
+  function addPayment(cid,rawAmt,confirm) {
+    var amt=+rawAmt; if(!amt||isNaN(amt)||amt<=0) return;
+    var key=cid+"-"+CUR_MON;
+    setPays(function(prev){
+      var n=Object.assign({},prev);
+      n[key]=(n[key]||[]).concat([{id:Date.now(),amount:amt,date:DATE_STR,confirmed:!!confirm}]);
+      return n;
+    });
+    if(confirm) {
+      var c=cust.find(function(x){return x.id===cid;});
+      if(c) pushNotif(c.phone,{type:"payment",msg:"Payment of "+fmt(amt)+" for "+monLabel(CUR_MON)+" confirmed. Thank you!",icon:"💰"});
+    }
+  }
+  function removePayment(cid,pid) {
+    var key=cid+"-"+CUR_MON;
+    setPays(function(prev){
+      var n=Object.assign({},prev);
+      n[key]=(n[key]||[]).filter(function(r){return r.id!==pid;});
+      return n;
+    });
+  }
+  function setMenuWeek(weekStart, data) {
+    setMenu(function(prev){var n=Object.assign({},prev);n[weekStart]=data;return n;});
+  }
+
+  var stats = useMemo(function(){
+    var active=cust.filter(function(c){return c.active;});
+    var delivered=ords.filter(function(o){return o.status==="delivered";}).length;
+    return {
+      total:active.length,
+      monthly:active.filter(function(c){return c.plan==="monthly";}).length,
+      daily:active.filter(function(c){return c.plan==="daily";}).length,
+      delivered:delivered,
+      out:ords.filter(function(o){return o.status==="out";}).length,
+      pending:ords.filter(function(o){return o.status==="pending";}).length,
+      progress:active.length>0?Math.round(delivered/active.length*100):0,
+    };
+  }, [cust,ords]);
+
+  var payStats = useMemo(function(){
+    var active=cust.filter(function(c){return c.active&&c.rate>0;});
+    var due=0,collected=0,nPaid=0,nPartial=0,nUnpaid=0;
+    active.forEach(function(c){
+      var p=getPaid(c.id,CUR_MON);
+      due+=c.rate; collected+=Math.min(p,c.rate);
+      var s=getPayStat(c.id,CUR_MON,c.rate);
+      if(s==="paid")nPaid++; else if(s==="partial")nPartial++; else nUnpaid++;
+    });
+    return {due:due,collected:collected,nPaid:nPaid,nPartial:nPartial,nUnpaid:nUnpaid,pct:due>0?Math.round(collected/due*100):0};
+  }, [cust,pays]);
+
+  var todayMenu = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
+  var weekMenu  = menu[THIS_WEEK] || null;
+
+  if(screen==="roleSelect") return (
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col items-center justify-center p-6" style={{fontFamily:"system-ui,sans-serif"}}>
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-10">
+          <div className="text-7xl mb-4">🍱</div>
+          <h1 className="text-3xl font-black text-stone-800">TiffinTrack</h1>
+          <p className="text-stone-400 mt-1 text-sm">Home food delivery manager</p>
+        </div>
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wider text-center mb-4">Choose your role</p>
+        <div className="space-y-3">
+          {[
+            {icon:"👔",title:"Business Owner", sub:"Full access",         bdr:"border-orange-200 hover:border-orange-400",fn:function(){setScreen("mgrAuth");}},
+            {icon:"🚴",title:"Delivery Person",sub:"Today's deliveries",  bdr:"border-blue-200 hover:border-blue-400",  fn:function(){setScreen("delivAuth");}},
+            {icon:"👤",title:"I'm a Customer", sub:"My order & payment",  bdr:"border-green-200 hover:border-green-400", fn:function(){setScreen("custAuth");}},
+          ].map(function(r){
+            return (
+              <button key={r.title} onClick={r.fn} className={"w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 "+r.bdr+" hover:shadow-md transition-all text-left"}>
+                <div className="w-14 h-14 bg-stone-50 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0">{r.icon}</div>
+                <div><p className="font-black text-stone-800 text-base">{r.title}</p><p className="text-xs text-stone-400 mt-0.5">{r.sub}</p></div>
+                <span className="ml-auto text-stone-300 text-xl">›</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  if(screen==="mgrAuth")   return <AuthScreen icon="👔" title="Owner Access"    subtitle="Enter your manager PIN"             hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput}   onChange={setMgrInput}   error={mgrErr?"Wrong PIN. Try again.":null}                                    onBack={function(){setScreen("roleSelect");setMgrErr(false);}}  onSubmit={loginMgr}  hint="Default PIN: 0000"                          isPhone={false}/>;
+  if(screen==="delivAuth") return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN"            hdr="bg-blue-600"   btn="bg-blue-600 hover:bg-blue-700"     value={pinInput}   onChange={setPinInput}   error={pinErr?"Wrong PIN. Try again.":null}                                    onBack={function(){setScreen("roleSelect");setPinErr(false);}}  onSubmit={loginDel}  hint="Get the PIN from the business owner"        isPhone={false}/>;
+  if(screen==="custAuth")  return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600"  btn="bg-green-600 hover:bg-green-700"   value={phoneInput} onChange={setPhoneInput} error={phonErr?"Number not found. Contact the business owner.":null} onBack={function(){setScreen("roleSelect");setPhonErr(false);}} onSubmit={loginCust} hint="Use the number given to the business" isPhone={true}/>;
+
+  if(role==="delivery") return (
+    <DeliveryView orders={ords} customers={cust} advance={advanceStatus} resetDay={resetDay} logout={logout} stats={stats}/>
+  );
+
+  if(role==="customer") {
+    var c=cust.find(function(x){return x.phone===custPhone;});
+    var cNotifs=notifs[custPhone]||[];
+    return (
+      <CustomerView
+        customer={c}
+        order={ords.find(function(o){return o.id===(c&&c.id);})}
+        paid={c?getPaid(c.id,CUR_MON):0}
+        payStatus={c?getPayStat(c.id,CUR_MON,c.rate):"unpaid"}
+        notifs={cNotifs}
+        onRead={function(){
+          setNotifs(function(prev){
+            var n=Object.assign({},prev);
+            n[custPhone]=(n[custPhone]||[]).map(function(x){return Object.assign({},x,{read:true});});
+            return n;
+          });
+        }}
+        curMonLabel={monLabel(CUR_MON)}
+        logout={logout}
+        todayMenu={todayMenu}
+        weekMenu={weekMenu}
+      />
+    );
+  }
+
+  return (
+    <ManagerView
+      customers={cust}
+      setCustomers={function(cs){
+        setCust(cs);
+        setOrds(function(prev){return makeOrders(cs).map(function(no){return prev.find(function(o){return o.id===no.id;})||no;});});
+      }}
+      orders={ords} setOrders={setOrds}
+      payments={pays} menu={menu} setMenuWeek={setMenuWeek}
+      stats={stats} payStats={payStats}
+      getPaid={getPaid} getPayStat={getPayStat}
+      addPayment={addPayment} removePayment={removePayment}
+      resetDay={resetDay} advanceStatus={advanceStatus}
+      curMonth={CUR_MON}
+      delivPin={delivPin} setDelivPin={setDelivPin}
+      mgrPin={mgrPin} setMgrPin={setMgrPin}
+      logout={logout}
+    />
+  );
+}
