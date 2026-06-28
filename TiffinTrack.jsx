@@ -1,4 +1,52 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore,
+  connectFirestoreEmulator,
+  collection,
+  doc,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  deleteField,
+  runTransaction
+} from "firebase/firestore";
+import {
+  getFunctions,
+  connectFunctionsEmulator,
+  httpsCallable
+} from "firebase/functions";
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "mock-api-key",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "mock-project.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "maa-sharda-tiffin",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "mock-project.appspot.com",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "123456789",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:123456789:web:mockid"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const functions = getFunctions(app);
+
+const BUSINESS_ID = import.meta.env.VITE_BUSINESS_ID || "default";
+
+// Connect to emulators if running locally
+if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+  connectFirestoreEmulator(db, "127.0.0.1", 8080);
+  connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+}
+
+// Browser-compatible SHA-256 hash helper
+async function hashPIN(pin) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(String(pin));
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 const TODAY     = new Date().toISOString().slice(0, 10);
@@ -1013,180 +1061,489 @@ function ManagerView(props) {
 // APP
 // ══════════════════════════════════════════════════════════════════════════════
 export default function App() {
-  var scrS=useState("roleSelect"); var screen=scrS[0],setScreen=scrS[1];
-  var roleS=useState(null); var role=roleS[0],setRole=roleS[1];
-  var cS=useState(SEED_C); var cust=cS[0],setCust=cS[1];
-  var oS=useState(function(){return makeOrders(SEED_C);}); var ords=oS[0],setOrds=oS[1];
-  var pS=useState(SEED_P); var pays=pS[0],setPays=pS[1];
-  var mS=useState(SEED_MENU); var menu=mS[0],setMenu=mS[1];
-  var dpS=useState("1234"); var delivPin=dpS[0],setDelivPin=dpS[1];
-  var mpS=useState("0000"); var mgrPin=mpS[0],setMgrPin=mpS[1];
-  var nS=useState({}); var notifs=nS[0],setNotifs=nS[1];
-  var cpS=useState(""); var custPhone=cpS[0],setCustPhone=cpS[1];
+  const [screen, setScreen] = useState("roleSelect");
+  const [role, setRole] = useState(null);
+  const [cust, setCust] = useState([]);
+  const [ords, setOrds] = useState([]);
+  const [pays, setPays] = useState({});
+  const [menu, setMenu] = useState({});
+  const [delivPin, setDelivPin] = useState("Set (Hashed)");
+  const [mgrPin, setMgrPin] = useState("Set (Hashed)");
+  const [notifs, setNotifs] = useState({});
+  const [custPhone, setCustPhone] = useState("");
 
-  var miS=useState(""); var mgrInput=miS[0],setMgrInput=miS[1];
-  var meS=useState(false); var mgrErr=meS[0],setMgrErr=meS[1];
-  var piS=useState(""); var pinInput=piS[0],setPinInput=piS[1];
-  var peS=useState(false); var pinErr=peS[0],setPinErr=peS[1];
-  var phiS=useState(""); var phoneInput=phiS[0],setPhoneInput=phiS[1];
-  var pheS=useState(false); var phonErr=pheS[0],setPhonErr=pheS[1];
+  const [mgrPinHash, setMgrPinHash] = useState("");
+  const [delivPinHash, setDelivPinHash] = useState("");
+  const [userPin, setUserPin] = useState("");
 
-  function pushNotif(phone, notif) {
-    setNotifs(function(prev){
-      var prev2 = Object.assign({}, prev);
-      var arr = (prev2[phone]||[]).slice();
-      arr.unshift(Object.assign({}, notif, {id:Date.now(), read:false, date:DATE_STR}));
-      prev2[phone] = arr.slice(0,30);
-      return prev2;
+  const [mgrInput, setMgrInput] = useState("");
+  const [mgrErr, setMgrErr] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinErr, setPinErr] = useState(false);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phonErr, setPhonErr] = useState(false);
+
+  // ─── Real-time Sync ────────────────────────────────────────────────────────
+  useEffect(() => {
+    // 1. Sync Customers
+    const customersQuery = collection(db, "businesses", BUSINESS_ID, "customers");
+    const unsubscribeCustomers = onSnapshot(customersQuery, (snapshot) => {
+      const list = [];
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        list.push({
+          id: doc.id,
+          name: d.name,
+          phone: d.phone,
+          address: d.address,
+          plan: d.plan,
+          food: d.food,
+          rate: d.rate,
+          active: d.active
+        });
+      });
+      setCust(list);
     });
+
+    // 2. Sync Today's Orders
+    const dateKey = TODAY;
+    const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", dateKey);
+    const unsubscribeOrders = onSnapshot(orderDocRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        const list = [];
+        Object.keys(data).forEach((cid) => {
+          list.push({
+            id: cid,
+            status: data[cid].status,
+            updatedAt: data[cid].updatedAt,
+            updatedBy: data[cid].updatedBy
+          });
+        });
+        setOrds(list);
+      } else {
+        setOrds([]);
+      }
+    });
+
+    // 3. Sync Payments
+    const paymentsQuery = collection(db, "businesses", BUSINESS_ID, "payments");
+    const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
+      const data = {};
+      snapshot.forEach((doc) => {
+        const stateKey = doc.id.replace("_", "-");
+        data[stateKey] = doc.data().records || [];
+      });
+      setPays(data);
+    });
+
+    // 4. Sync Menu
+    const menuQuery = collection(db, "businesses", BUSINESS_ID, "menu");
+    const unsubscribeMenu = onSnapshot(menuQuery, (snapshot) => {
+      const data = {};
+      snapshot.forEach((doc) => {
+        data[doc.id] = doc.data().days || [];
+      });
+      setMenu(data);
+    });
+
+    // 5. Sync Pin Hashes & config
+    const settingsDocRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
+    const unsubscribeSettings = onSnapshot(settingsDocRef, async (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setMgrPinHash(data.mgrPinHash);
+        setDelivPinHash(data.delivPinHash);
+      } else {
+        const defaultMgrHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        const defaultDelivHash = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4";
+        await setDoc(settingsDocRef, {
+          mgrPinHash: defaultMgrHash,
+          delivPinHash: defaultDelivHash,
+          businessName: "Maa Sharda Tiffin",
+          createdAt: new Date()
+        });
+      }
+    });
+
+    return () => {
+      unsubscribeCustomers();
+      unsubscribeOrders();
+      unsubscribePayments();
+      unsubscribeMenu();
+      unsubscribeSettings();
+    };
+  }, []);
+
+  // 6. Sync Notifications for the logged-in customer phone
+  useEffect(() => {
+    if (!custPhone) return;
+    const notificationsQuery = collection(db, "businesses", BUSINESS_ID, "notifications", custPhone, "messages");
+    const unsubscribeNotifications = onSnapshot(notificationsQuery, (snapshot) => {
+      const list = [];
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        const dateStr = d.createdAt
+          ? new Date(d.createdAt.seconds * 1000).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+          : DATE_STR;
+        list.push({
+          id: doc.id,
+          type: d.type,
+          msg: d.message,
+          icon: d.type === "payment" ? "💰" : "🚴",
+          read: d.read,
+          date: dateStr
+        });
+      });
+      setNotifs((prev) => {
+        const updated = { ...prev };
+        updated[custPhone] = list;
+        return updated;
+      });
+    });
+
+    return () => unsubscribeNotifications();
+  }, [custPhone]);
+
+  // ─── Actions ───────────────────────────────────────────────────────────────
+  async function loginMgr() {
+    const hashed = await hashPIN(mgrInput);
+    if (hashed !== mgrPinHash) {
+      setMgrErr(true);
+      return;
+    }
+    setMgrErr(false);
+    setUserPin(mgrInput);
+    setMgrInput("");
+    setRole("manager");
+    setScreen("app");
   }
 
-  function loginMgr() {
-    if(mgrInput!==mgrPin){setMgrErr(true);return;}
-    setMgrErr(false);setMgrInput("");setRole("manager");setScreen("app");
+  async function loginDel() {
+    const hashed = await hashPIN(pinInput);
+    if (hashed !== delivPinHash) {
+      setPinErr(true);
+      return;
+    }
+    setPinErr(false);
+    setUserPin(pinInput);
+    setPinInput("");
+    setRole("delivery");
+    setScreen("app");
   }
-  function loginDel() {
-    if(pinInput!==delivPin){setPinErr(true);return;}
-    setPinErr(false);setPinInput("");setRole("delivery");setScreen("app");
-  }
+
   function loginCust() {
-    var ph=phoneInput.trim();
-    var c=cust.find(function(x){return x.phone===ph;});
-    if(!c){setPhonErr(true);return;}
-    setPhonErr(false);setCustPhone(ph);setRole("customer");setScreen("app");
+    const ph = phoneInput.trim();
+    const c = cust.find((x) => x.phone === ph);
+    if (!c) {
+      setPhonErr(true);
+      return;
+    }
+    setPhonErr(false);
+    setCustPhone(ph);
+    setRole("customer");
+    setScreen("app");
   }
+
   function logout() {
-    setRole(null);setScreen("roleSelect");
-    setPhoneInput("");setCustPhone("");setPinInput("");setMgrInput("");
-    setMgrErr(false);setPinErr(false);setPhonErr(false);
+    setRole(null);
+    setScreen("roleSelect");
+    setPhoneInput("");
+    setCustPhone("");
+    setPinInput("");
+    setMgrInput("");
+    setUserPin("");
+    setMgrErr(false);
+    setPinErr(false);
+    setPhonErr(false);
   }
 
-  function advanceStatus(id) {
-    var updated = ords.map(function(o){
-      if(o.id!==id) return o;
-      var next=DST[o.status].next;
-      return next?Object.assign({},o,{status:next}):o;
-    });
-    setOrds(updated);
-    var c=cust.find(function(x){return x.id===id;});
-    var ns=updated.find(function(o){return o.id===id;}); ns=ns&&ns.status;
-    if(c&&ns==="out")       pushNotif(c.phone,{type:"delivery",msg:"Your food is on the way! Should arrive shortly.",icon:"🚴"});
-    if(c&&ns==="delivered") pushNotif(c.phone,{type:"delivery",msg:"Your food has been delivered! Enjoy your meal.",icon:"✅"});
-  }
-  function resetDay() { setOrds(makeOrders(cust)); }
-
-  function getPaid(cid,mon) { return (pays[cid+"-"+mon]||[]).reduce(function(s,r){return s+r.amount;},0); }
-  function getPayStat(cid,mon,rate) {
-    if(!rate) return "unpaid";
-    var p=getPaid(cid,mon);
-    return p<=0?"unpaid":p>=rate?"paid":"partial";
-  }
-  function addPayment(cid,rawAmt,confirm) {
-    var amt=+rawAmt; if(!amt||isNaN(amt)||amt<=0) return;
-    var key=cid+"-"+CUR_MON;
-    setPays(function(prev){
-      var n=Object.assign({},prev);
-      n[key]=(n[key]||[]).concat([{id:Date.now(),amount:amt,date:DATE_STR,confirmed:!!confirm}]);
-      return n;
-    });
-    if(confirm) {
-      var c=cust.find(function(x){return x.id===cid;});
-      if(c) pushNotif(c.phone,{type:"payment",msg:"Payment of "+fmt(amt)+" for "+monLabel(CUR_MON)+" confirmed. Thank you!",icon:"💰"});
+  async function advanceStatus(id) {
+    const updateDeliveryStatusFn = httpsCallable(functions, "updateDeliveryStatus");
+    try {
+      await updateDeliveryStatusFn({
+        pin: userPin,
+        customerId: String(id),
+        date: TODAY
+      });
+    } catch (e) {
+      console.error(e);
+      alert("Error updating status: " + e.message);
     }
   }
-  function removePayment(cid,pid) {
-    var key=cid+"-"+CUR_MON;
-    setPays(function(prev){
-      var n=Object.assign({},prev);
-      n[key]=(n[key]||[]).filter(function(r){return r.id!==pid;});
-      return n;
+
+  async function resetDay() {
+    const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
+    const orderData = {};
+    cust.forEach((c) => {
+      if (c.active) {
+        orderData[String(c.id)] = {
+          status: "pending",
+          updatedAt: new Date(),
+          updatedBy: "manager"
+        };
+      }
     });
-  }
-  function setMenuWeek(weekStart, data) {
-    setMenu(function(prev){var n=Object.assign({},prev);n[weekStart]=data;return n;});
+    await setDoc(orderDocRef, orderData);
   }
 
-  var stats = useMemo(function(){
-    var active=cust.filter(function(c){return c.active;});
-    var delivered=ords.filter(function(o){return o.status==="delivered";}).length;
+  function getPaid(cid, mon) {
+    return (pays[cid + "-" + mon] || []).reduce((s, r) => s + r.amount, 0);
+  }
+
+  function getPayStat(cid, mon, rate) {
+    if (!rate) return "unpaid";
+    const p = getPaid(cid, mon);
+    return p <= 0 ? "unpaid" : p >= rate ? "paid" : "partial";
+  }
+
+  async function addPayment(cid, rawAmt) {
+    const amt = +rawAmt;
+    if (!amt || isNaN(amt) || amt <= 0) return;
+    const confirmPaymentFn = httpsCallable(functions, "confirmPayment");
+    try {
+      await confirmPaymentFn({
+        pin: userPin,
+        customerId: String(cid),
+        amount: amt,
+        date: new Date().toISOString()
+      });
+    } catch (e) {
+      console.error(e);
+      alert("Error confirming payment: " + e.message);
+    }
+  }
+
+  async function removePayment(cid, pid) {
+    const monthKey = CUR_MON;
+    const docRef = doc(db, "businesses", BUSINESS_ID, "payments", `${cid}_${monthKey}`);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const recordToRemove = data.records.find((r) => r.id === pid);
+        if (!recordToRemove) return;
+        const updatedRecords = data.records.filter((r) => r.id !== pid);
+        const updatedTotal = Math.max(0, (data.totalPaid || 0) - recordToRemove.amount);
+        transaction.update(docRef, {
+          records: updatedRecords,
+          totalPaid: updatedTotal
+        });
+      });
+    } catch (e) {
+      console.error(e);
+      alert("Error removing payment: " + e.message);
+    }
+  }
+
+  async function setMenuWeek(weekStart, data) {
+    const docRef = doc(db, "businesses", BUSINESS_ID, "menu", weekStart);
+    await setDoc(docRef, {
+      days: data,
+      updatedAt: new Date()
+    }, { merge: true });
+  }
+
+  async function updateCustomersInFirestore(updatedList) {
+    const currentIds = cust.map((c) => String(c.id));
+    const updatedIds = updatedList.map((c) => String(c.id));
+
+    // Delete removed customers
+    const deletedIds = currentIds.filter((id) => !updatedIds.includes(id));
+    for (const id of deletedIds) {
+      await deleteDoc(doc(db, "businesses", BUSINESS_ID, "customers", id));
+      try {
+        const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
+        await updateDoc(orderDocRef, {
+          [id]: deleteField()
+        });
+      } catch (e) {}
+    }
+
+    // Add or update remaining customers
+    for (const c of updatedList) {
+      const docId = String(c.id);
+      const oldVal = cust.find((x) => String(x.id) === docId);
+
+      if (!oldVal || oldVal.active !== c.active) {
+        const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
+        if (c.active === false) {
+          try {
+            await updateDoc(orderDocRef, {
+              [docId]: deleteField()
+            });
+          } catch (e) {}
+        } else {
+          await setDoc(orderDocRef, {
+            [docId]: {
+              status: "pending",
+              updatedAt: new Date(),
+              updatedBy: "manager"
+            }
+          }, { merge: true });
+        }
+      }
+
+      await setDoc(doc(db, "businesses", BUSINESS_ID, "customers", docId), {
+        name: c.name,
+        phone: c.phone,
+        address: c.address,
+        plan: c.plan,
+        food: c.food,
+        rate: c.rate,
+        active: c.active !== undefined ? c.active : true,
+        createdAt: c.createdAt || new Date()
+      }, { merge: true });
+    }
+  }
+
+  async function updateDelivPin(newPin) {
+    const changePinFn = httpsCallable(functions, "changePIN");
+    try {
+      await changePinFn({
+        currentPin: userPin,
+        newPin: newPin,
+        target: "delivery"
+      });
+    } catch (e) {
+      console.error(e);
+      alert("Error changing delivery PIN: " + e.message);
+    }
+  }
+
+  async function updateMgrPin(newPin) {
+    const changePinFn = httpsCallable(functions, "changePIN");
+    try {
+      await changePinFn({
+        currentPin: userPin,
+        newPin: newPin,
+        target: "manager"
+      });
+      setUserPin(newPin);
+    } catch (e) {
+      console.error(e);
+      alert("Error changing manager PIN: " + e.message);
+    }
+  }
+
+  // ─── Stats and Selectors ──────────────────────────────────────────────────
+  const displayOrders = useMemo(() => {
+    const activeCustomers = cust.filter((c) => c.active);
+    return activeCustomers.map((c) => {
+      const order = ords.find((o) => String(o.id) === String(c.id));
+      return order || {
+        id: c.id,
+        status: "pending",
+        updatedAt: null,
+        updatedBy: null
+      };
+    });
+  }, [cust, ords]);
+
+  const stats = useMemo(() => {
+    const active = cust.filter((c) => c.active);
+    const delivered = displayOrders.filter((o) => o.status === "delivered").length;
     return {
-      total:active.length,
-      monthly:active.filter(function(c){return c.plan==="monthly";}).length,
-      daily:active.filter(function(c){return c.plan==="daily";}).length,
-      delivered:delivered,
-      out:ords.filter(function(o){return o.status==="out";}).length,
-      pending:ords.filter(function(o){return o.status==="pending";}).length,
-      progress:active.length>0?Math.round(delivered/active.length*100):0,
+      total: active.length,
+      monthly: active.filter((c) => c.plan === "monthly").length,
+      daily: active.filter((c) => c.plan === "daily").length,
+      delivered: delivered,
+      out: displayOrders.filter((o) => o.status === "out").length,
+      pending: displayOrders.filter((o) => o.status === "pending").length,
+      progress: active.length > 0 ? Math.round((delivered / active.length) * 100) : 0
     };
-  }, [cust,ords]);
+  }, [cust, displayOrders]);
 
-  var payStats = useMemo(function(){
-    var active=cust.filter(function(c){return c.active&&c.rate>0;});
-    var due=0,collected=0,nPaid=0,nPartial=0,nUnpaid=0;
-    active.forEach(function(c){
-      var p=getPaid(c.id,CUR_MON);
-      due+=c.rate; collected+=Math.min(p,c.rate);
-      var s=getPayStat(c.id,CUR_MON,c.rate);
-      if(s==="paid")nPaid++; else if(s==="partial")nPartial++; else nUnpaid++;
+  const payStats = useMemo(() => {
+    const active = cust.filter((c) => c.active && c.rate > 0);
+    let due = 0;
+    let collected = 0;
+    let nPaid = 0;
+    let nPartial = 0;
+    let nUnpaid = 0;
+    active.forEach((c) => {
+      const p = getPaid(c.id, CUR_MON);
+      due += c.rate;
+      collected += Math.min(p, c.rate);
+      const s = getPayStat(c.id, CUR_MON, c.rate);
+      if (s === "paid") nPaid++;
+      else if (s === "partial") nPartial++;
+      else nUnpaid++;
     });
-    return {due:due,collected:collected,nPaid:nPaid,nPartial:nPartial,nUnpaid:nUnpaid,pct:due>0?Math.round(collected/due*100):0};
-  }, [cust,pays]);
+    return {
+      due: due,
+      collected: collected,
+      nPaid: nPaid,
+      nPartial: nPartial,
+      nUnpaid: nUnpaid,
+      pct: due > 0 ? Math.round((collected / due) * 100) : 0
+    };
+  }, [cust, pays]);
 
-  var todayMenu = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
-  var weekMenu  = menu[THIS_WEEK] || null;
+  const todayMenu = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
+  const weekMenu = menu[THIS_WEEK] || null;
 
-  if(screen==="roleSelect") return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col items-center justify-center p-6" style={{fontFamily:"system-ui,sans-serif"}}>
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-10">
-          <div className="text-7xl mb-4">🍱</div>
-          <h1 className="text-3xl font-black text-stone-800">TiffinTrack</h1>
-          <p className="text-stone-400 mt-1 text-sm">Home food delivery manager</p>
-        </div>
-        <p className="text-xs font-bold text-stone-400 uppercase tracking-wider text-center mb-4">Choose your role</p>
-        <div className="space-y-3">
-          {[
-            {icon:"👔",title:"Business Owner", sub:"Full access",         bdr:"border-orange-200 hover:border-orange-400",fn:function(){setScreen("mgrAuth");}},
-            {icon:"🚴",title:"Delivery Person",sub:"Today's deliveries",  bdr:"border-blue-200 hover:border-blue-400",  fn:function(){setScreen("delivAuth");}},
-            {icon:"👤",title:"I'm a Customer", sub:"My order & payment",  bdr:"border-green-200 hover:border-green-400", fn:function(){setScreen("custAuth");}},
-          ].map(function(r){
-            return (
-              <button key={r.title} onClick={r.fn} className={"w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 "+r.bdr+" hover:shadow-md transition-all text-left"}>
-                <div className="w-14 h-14 bg-stone-50 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0">{r.icon}</div>
-                <div><p className="font-black text-stone-800 text-base">{r.title}</p><p className="text-xs text-stone-400 mt-0.5">{r.sub}</p></div>
-                <span className="ml-auto text-stone-300 text-xl">›</span>
-              </button>
-            );
-          })}
+  if (screen === "roleSelect") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col items-center justify-center p-6" style={{ fontFamily: "system-ui,sans-serif" }}>
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-10">
+            <div className="text-7xl mb-4">🍱</div>
+            <h1 className="text-3xl font-black text-stone-800">TiffinTrack</h1>
+            <p className="text-stone-400 mt-1 text-sm">Home food delivery manager</p>
+          </div>
+          <p className="text-xs font-bold text-stone-400 uppercase tracking-wider text-center mb-4">Choose your role</p>
+          <div className="space-y-3">
+            {[
+              { icon: "👔", title: "Business Owner", sub: "Full access", bdr: "border-orange-200 hover:border-orange-400", fn: function () { setScreen("mgrAuth"); } },
+              { icon: "🚴", title: "Delivery Person", sub: "Today's deliveries", bdr: "border-blue-200 hover:border-blue-400", fn: function () { setScreen("delivAuth"); } },
+              { icon: "👤", title: "I'm a Customer", sub: "My order & payment", bdr: "border-green-200 hover:border-green-400", fn: function () { setScreen("custAuth"); } }
+            ].map(function (r) {
+              return (
+                <button key={r.title} onClick={r.fn} className={"w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 " + r.bdr + " hover:shadow-md transition-all text-left"}>
+                  <div className="w-14 h-14 bg-stone-50 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0">{r.icon}</div>
+                  <div><p className="font-black text-stone-800 text-base">{r.title}</p><p className="text-xs text-stone-400 mt-0.5">{r.sub}</p></div>
+                  <span className="ml-auto text-stone-300 text-xl">›</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if(screen==="mgrAuth")   return <AuthScreen icon="👔" title="Owner Access"    subtitle="Enter your manager PIN"             hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput}   onChange={setMgrInput}   error={mgrErr?"Wrong PIN. Try again.":null}                                    onBack={function(){setScreen("roleSelect");setMgrErr(false);}}  onSubmit={loginMgr}  hint="Default PIN: 0000"                          isPhone={false}/>;
-  if(screen==="delivAuth") return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN"            hdr="bg-blue-600"   btn="bg-blue-600 hover:bg-blue-700"     value={pinInput}   onChange={setPinInput}   error={pinErr?"Wrong PIN. Try again.":null}                                    onBack={function(){setScreen("roleSelect");setPinErr(false);}}  onSubmit={loginDel}  hint="Get the PIN from the business owner"        isPhone={false}/>;
-  if(screen==="custAuth")  return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600"  btn="bg-green-600 hover:bg-green-700"   value={phoneInput} onChange={setPhoneInput} error={phonErr?"Number not found. Contact the business owner.":null} onBack={function(){setScreen("roleSelect");setPhonErr(false);}} onSubmit={loginCust} hint="Use the number given to the business" isPhone={true}/>;
+  if (screen === "mgrAuth") {
+    return <AuthScreen icon="👔" title="Owner Access" subtitle="Enter your manager PIN" hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput} onChange={setMgrInput} error={mgrErr ? "Wrong PIN. Try again." : null} onBack={function () { setScreen("roleSelect"); setMgrErr(false); }} onSubmit={loginMgr} hint="Default PIN: 0000" isPhone={false} />;
+  }
+  if (screen === "delivAuth") {
+    return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={pinErr ? "Wrong PIN. Try again." : null} onBack={function () { setScreen("roleSelect"); setPinErr(false); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} />;
+  }
+  if (screen === "custAuth") {
+    return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600" btn="bg-green-600 hover:bg-green-700" value={phoneInput} onChange={setPhoneInput} error={phonErr ? "Number not found. Contact the business owner." : null} onBack={function () { setScreen("roleSelect"); setPhonErr(false); }} onSubmit={loginCust} hint="Use the number given to the business" isPhone={true} />;
+  }
 
-  if(role==="delivery") return (
-    <DeliveryView orders={ords} customers={cust} advance={advanceStatus} resetDay={resetDay} logout={logout} stats={stats}/>
-  );
+  if (role === "delivery") {
+    return <DeliveryView orders={displayOrders} customers={cust} advance={advanceStatus} resetDay={resetDay} logout={logout} stats={stats} />;
+  }
 
-  if(role==="customer") {
-    var c=cust.find(function(x){return x.phone===custPhone;});
-    var cNotifs=notifs[custPhone]||[];
+  if (role === "customer") {
+    const c = cust.find((x) => x.phone === custPhone);
+    const cNotifs = notifs[custPhone] || [];
     return (
       <CustomerView
         customer={c}
-        order={ords.find(function(o){return o.id===(c&&c.id);})}
-        paid={c?getPaid(c.id,CUR_MON):0}
-        payStatus={c?getPayStat(c.id,CUR_MON,c.rate):"unpaid"}
+        order={displayOrders.find((o) => String(o.id) === String(c && c.id))}
+        paid={c ? getPaid(c.id, CUR_MON) : 0}
+        payStatus={c ? getPayStat(c.id, CUR_MON, c.rate) : "unpaid"}
         notifs={cNotifs}
-        onRead={function(){
-          setNotifs(function(prev){
-            var n=Object.assign({},prev);
-            n[custPhone]=(n[custPhone]||[]).map(function(x){return Object.assign({},x,{read:true});});
-            return n;
-          });
+        onRead={async function () {
+          const unreadNotifs = cNotifs.filter((n) => !n.read);
+          for (const n of unreadNotifs) {
+            const docRef = doc(db, "businesses", BUSINESS_ID, "notifications", custPhone, "messages", n.id);
+            await updateDoc(docRef, { read: true });
+          }
         }}
         curMonLabel={monLabel(CUR_MON)}
         logout={logout}
@@ -1199,19 +1556,25 @@ export default function App() {
   return (
     <ManagerView
       customers={cust}
-      setCustomers={function(cs){
-        setCust(cs);
-        setOrds(function(prev){return makeOrders(cs).map(function(no){return prev.find(function(o){return o.id===no.id;})||no;});});
-      }}
-      orders={ords} setOrders={setOrds}
-      payments={pays} menu={menu} setMenuWeek={setMenuWeek}
-      stats={stats} payStats={payStats}
-      getPaid={getPaid} getPayStat={getPayStat}
-      addPayment={addPayment} removePayment={removePayment}
-      resetDay={resetDay} advanceStatus={advanceStatus}
+      setCustomers={updateCustomersInFirestore}
+      orders={displayOrders}
+      setOrders={async () => {}}
+      payments={pays}
+      menu={menu}
+      setMenuWeek={setMenuWeek}
+      stats={stats}
+      payStats={payStats}
+      getPaid={getPaid}
+      getPayStat={getPayStat}
+      addPayment={addPayment}
+      removePayment={removePayment}
+      resetDay={resetDay}
+      advanceStatus={advanceStatus}
       curMonth={CUR_MON}
-      delivPin={delivPin} setDelivPin={setDelivPin}
-      mgrPin={mgrPin} setMgrPin={setMgrPin}
+      delivPin={delivPin}
+      setDelivPin={updateDelivPin}
+      mgrPin={mgrPin}
+      setMgrPin={updateMgrPin}
       logout={logout}
     />
   );
