@@ -1427,6 +1427,8 @@ export default function App() {
 
   // ─── Real-time Sync ────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!firebaseUid) return; // Wait for anonymous auth before attaching listeners
+
     // 1. Sync Customers
     const customersQuery = collection(db, "businesses", BUSINESS_ID, "customers");
     const unsubscribeCustomers = onSnapshot(customersQuery, (snapshot) => {
@@ -1520,7 +1522,7 @@ export default function App() {
       unsubscribeMenu();
       unsubscribeSettings();
     };
-  }, []);
+  }, [firebaseUid]);
 
   // ─── Automated System Maintenance (Fallback for Cloud Functions) ───────────
   useEffect(() => {
