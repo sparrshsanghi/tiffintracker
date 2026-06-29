@@ -20,28 +20,26 @@ import {
   getDocs,
   getDoc
 } from "firebase/firestore";
-import { getFunctions, connectFunctionsEmulator, httpsCallable } from "firebase/functions";
 import { DeliveryView, CustomerView, ManagerView as NewManagerView } from "./src/Views.jsx";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "mock-api-key",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "mock-project.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "maa-sharda-tiffin",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "mock-project.appspot.com",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "123456789",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:123456789:web:mockid"
+  apiKey: "AIzaSyCcnx83mNfBNEuFX8GYVHehfO3veuKvSa8",
+  authDomain: "maa-sharda-sns.firebaseapp.com",
+  projectId: "maa-sharda-sns",
+  storageBucket: "maa-sharda-sns.firebasestorage.app",
+  messagingSenderId: "662147715598",
+  appId: "1:662147715598:web:b369234e7a03e55657225f",
+  measurementId: "G-8LZVBYVVX0"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const functions = getFunctions(app);
 
-const BUSINESS_ID = import.meta.env.VITE_BUSINESS_ID || "default";
+const BUSINESS_ID = "default";
 
-// Connect to emulators if running locally
+// Connect to Firestore emulator if running locally
 if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
   connectFirestoreEmulator(db, "127.0.0.1", 8080);
-  connectFunctionsEmulator(functions, "127.0.0.1", 5001);
 }
 
 // Browser-compatible SHA-256 hash helper
