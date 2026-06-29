@@ -11,6 +11,7 @@ const {setGlobalOptions} = require("firebase-functions");
 const {confirmPayment} = require("./confirmPayment");
 const {updateDeliveryStatus} = require("./updateDeliveryStatus");
 const {changePIN} = require("./changePIN");
+const scheduledTasks = require("./scheduledTasks");
 
 // For cost control, you can set the maximum number of containers that can be
 // running at the same time. This helps mitigate the impact of unexpected
@@ -28,4 +29,5 @@ module.exports = {
   confirmPayment,
   updateDeliveryStatus,
   changePIN,
+  ...scheduledTasks,
 };

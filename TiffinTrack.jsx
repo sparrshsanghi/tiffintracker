@@ -1,4 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
+import {
+  MapPin, Package, CheckCircle2, ChevronDown, ChevronUp,
+  Phone, Bell, CreditCard, Home, Building2, UtensilsCrossed,
+  Users, AlertCircle, Bike, BriefcaseBusiness
+} from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore,
@@ -12,11 +17,8 @@ import {
   deleteField,
   runTransaction
 } from "firebase/firestore";
-import {
-  getFunctions,
-  connectFunctionsEmulator,
-  httpsCallable
-} from "firebase/functions";
+import { getFunctions, connectFunctionsEmulator, httpsCallable } from "firebase/functions";
+import { DeliveryView, CustomerView, ManagerView as NewManagerView } from "./src/Views.jsx";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "mock-api-key",
@@ -71,10 +73,20 @@ function weekRange(monday) {
   return new Date(ds[0]).toLocaleDateString("en-IN",{day:"numeric",month:"short"}) + " – " +
          new Date(ds[6]).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
 }
-function monLabel(key) {
-  var p = key.split("-");
-  return new Date(+p[0], +p[1]-1, 1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+function monLabel(YYYYMM) {
+  var d = new Date(YYYYMM + "-01");
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
+
+function getDefaultFood(customFood) {
+  if (customFood && customFood.trim().length > 0) return customFood;
+  const d = new Date();
+  const isSunday = d.getDay() === 0;
+  const isNoon = d.getHours() < 16;
+  if (isSunday && isNoon) return "Special (Pav Bhaji / Biryani)";
+  return "Roti, Rice, Daal";
+}
+
 function prevMon(key) {
   var p = key.split("-"), d = new Date(+p[0], +p[1]-2, 1);
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
@@ -312,8 +324,14 @@ function MenuPlanner(props) {
       })}
 
       <div className="space-y-2 pt-2">
-        <a href={"https://wa.me/?text="+encodeURIComponent(buildWaMsg())} target="_blank" rel="noreferrer"
-          className="flex items-center justify-center gap-2 w-full py-3.5 bg-green-600 text-white rounded-2xl text-sm font-black hover:bg-green-700 shadow-sm">
+        <a href={props.whatsappGroup ? props.whatsappGroup : ("https://wa.me/?text="+encodeURIComponent(buildWaMsg()))} target="_blank" rel="noreferrer"
+          className="flex items-center justify-center gap-2 w-full py-3.5 bg-green-600 text-white rounded-2xl text-sm font-black hover:bg-green-700 shadow-sm"
+          onClick={function(e){
+            if (props.whatsappGroup) {
+              navigator.clipboard.writeText(buildWaMsg());
+              alert("Menu copied to clipboard! Paste it in your WhatsApp group.");
+            }
+          }}>
           Share Weekly Menu on WhatsApp
         </a>
         <button onClick={copyLastWeek} className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-2xl text-sm font-bold hover:bg-blue-100">
@@ -327,64 +345,214 @@ function MenuPlanner(props) {
 // ══════════════════════════════════════════════════════════════════════════════
 // DELIVERY VIEW
 // ══════════════════════════════════════════════════════════════════════════════
-function DeliveryView(props) {
+function OldDeliveryView(props) {
   var orders=props.orders, customers=props.customers, advance=props.advance;
-  var resetDay=props.resetDay, logout=props.logout, stats=props.stats;
+  var advanceGroup=props.advanceGroup, setRiderNext=props.setRiderNext, resetDay=props.resetDay;
+  var logout=props.logout, stats=props.stats;
+
+  var groups = {};
+  var ungrouped = [];
+  var totalTiffins = 0;
+  orders.forEach(function(order){
+    var c = customers.find(function(x){return x.id===order.id;});
+    if(!c) return;
+    totalTiffins++;
+    var g = (c.group || "").trim();
+    if(g) {
+      if(!groups[g]) groups[g] = [];
+      groups[g].push({order: order, customer: c});
+    } else {
+      ungrouped.push({order: order, customer: c});
+    }
+  });
+
+  var groupKeys = Object.keys(groups).sort(function(a, b) {
+    var minA = Math.min(...groups[a].map(o => (o.order.riderNextFlag ? -1000 : (o.customer.deliveryOrder || 999))));
+    var minB = Math.min(...groups[b].map(o => (o.order.riderNextFlag ? -1000 : (o.customer.deliveryOrder || 999))));
+    return minA - minB;
+  });
+
+  ungrouped.sort(function(a, b) {
+    var oa = a.order.riderNextFlag ? -1000 : (a.customer.deliveryOrder || 999);
+    var ob = b.order.riderNextFlag ? -1000 : (b.customer.deliveryOrder || 999);
+    return oa - ob;
+  });
+
+  var numGroups = groupKeys.length;
+  
+  var groupsDelivered = 0;
+  var groupsTransit = 0;
+  var groupsPending = 0;
+  
+  groupKeys.forEach(function(g) {
+    var gOrders = groups[g];
+    var allDelivered = gOrders.every(function(o){ return o.order.status === "delivered"; });
+    var anyTransit = gOrders.some(function(o){ return o.order.status === "out"; });
+    if(allDelivered) groupsDelivered++;
+    else if(anyTransit) groupsTransit++;
+    else groupsPending++;
+  });
+
+  var dayName = new Date().toLocaleDateString("en-US", { weekday: 'long' }).toUpperCase();
+
   return (
-    <div className="min-h-screen bg-blue-50" style={{fontFamily:"system-ui,sans-serif"}}>
-      <div className="bg-blue-600 text-white px-4 pt-5 pb-4 shadow-lg">
-        <div className="flex items-center justify-between max-w-lg mx-auto">
-          <div>
-            <div className="flex items-center gap-2"><span className="text-xl">🚴</span><span className="text-lg font-black">Delivery Mode</span></div>
-            <p className="text-blue-200 text-xs mt-0.5">{TODAY_STR}</p>
-          </div>
-          <div className="text-right">
-            <div className="flex items-baseline gap-0.5"><span className="text-3xl font-black">{stats.delivered}</span><span className="text-blue-300 font-semibold">/{stats.total}</span></div>
-            <p className="text-blue-200 text-xs">delivered</p>
-          </div>
-        </div>
-        <div className="mt-2 max-w-lg mx-auto">
-          <div className="h-1.5 bg-blue-800/40 rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-blue-300 to-green-400 rounded-full transition-all" style={{width:stats.progress+"%"}}></div>
-          </div>
-        </div>
-      </div>
-      <div className="p-4 max-w-lg mx-auto space-y-3">
-        <div className="flex justify-between items-center">
-          <p className="text-sm font-bold text-stone-600">{orders.length} deliveries today</p>
-          <button onClick={resetDay} className="text-xs font-bold text-stone-500 bg-white border border-stone-200 px-3 py-1.5 rounded-full">Reset</button>
-        </div>
-        {orders.length===0 && <div className="text-center py-16 text-stone-400"><div className="text-5xl mb-3">🍽️</div><p className="font-semibold">No deliveries today</p></div>}
-        {orders.map(function(order){
-          var c = customers.find(function(x){return x.id===order.id;});
-          if(!c) return null;
-          var st = DST[order.status];
-          return (
-            <div key={order.id} className={"bg-white rounded-2xl shadow-sm border overflow-hidden " + (order.status==="delivered"?"border-green-200":"border-stone-100")}>
-              <div className={"h-1.5 "+st.bar}></div>
-              <div className="p-4">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 pr-2">
-                    <p className="font-black text-stone-800 text-base">{c.name}</p>
-                    <p className="text-xs text-stone-500 mt-1">📍 {c.address}</p>
-                    <p className="text-xs text-stone-500 mt-0.5">🍴 {c.food}</p>
-                  </div>
-                  <span className={"text-xs px-2.5 py-1 rounded-full font-bold flex-shrink-0 "+st.badge}>{st.label}</span>
-                </div>
-                <div className="flex gap-2 mt-3">
-                  {st.next && <button onClick={function(){advance(order.id);}} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-black">Mark → {DST[st.next].label}</button>}
-                  <a href={waTo(c.phone,"Hi "+c.name+"! Your food is "+(order.status==="out"?"on the way 🚴":order.status==="delivered"?"delivered ✅":"being prepared 👩‍🍳")+" — thank you! 🙏")}
-                    target="_blank" rel="noreferrer"
-                    className={"py-2.5 px-4 bg-green-500 text-white rounded-xl text-sm font-black flex items-center gap-1.5 " + (!st.next?"flex-1 justify-center":"")}>
-                    WhatsApp
-                  </a>
-                </div>
-                {!st.next && <p className="mt-2 text-center text-green-600 text-sm font-bold">✓ Delivered</p>}
-              </div>
+    <div className="min-h-screen bg-[#FDFDFD] pb-10" style={{fontFamily:"'Inter', system-ui, sans-serif"}}>
+      <div className="max-w-md mx-auto p-4 pt-8">
+        
+        {/* Header */}
+        <p className="text-[11px] font-bold text-stone-400 tracking-widest">{dayName} &middot; {totalTiffins} TIFFINS &middot; {numGroups} BUILDINGS</p>
+        <h1 className="text-3xl font-black text-stone-200 mt-1 mb-6">
+          Group by <span className="text-amber-400">building.</span>
+        </h1>
+        
+        {/* Summary Card */}
+        <div className="bg-[#1C1C1C] rounded-[24px] p-5 flex items-center gap-5 mb-4 shadow-xl shadow-stone-200/50">
+          <div className="relative w-[60px] h-[60px] flex items-center justify-center shrink-0">
+            <svg className="absolute inset-0 w-full h-full rotate-[-90deg]" viewBox="0 0 36 36">
+              <path className="text-stone-700" strokeWidth="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              <path className="text-amber-400 transition-all duration-500" strokeDasharray={(numGroups>0?(groupsDelivered/numGroups)*100:0) + ", 100"} strokeWidth="3" stroke="currentColor" fill="none" strokeLinecap="round" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            </svg>
+            <div className="text-center flex flex-col">
+              <span className="text-white font-bold leading-none text-sm">{groupsDelivered}/{numGroups}</span>
+              <span className="text-[9px] text-stone-400 font-semibold mt-0.5">groups</span>
             </div>
-          );
-        })}
-        <button onClick={logout} className="w-full py-3 text-stone-400 font-semibold text-sm mt-2">← Switch Role</button>
+          </div>
+          <div className="flex-1">
+            <h2 className="text-white font-bold text-lg leading-tight mb-1">{groupsDelivered} groups delivered</h2>
+            <p className="text-stone-400 text-xs mb-3">{groupsTransit} in transit &middot; {groupsPending} pending</p>
+            <div className="flex gap-2">
+              <span className="bg-amber-500/20 text-amber-500 text-[10px] font-bold px-3 py-1.5 rounded-lg border border-amber-500/10">{stats.out} out for delivery</span>
+              <span className="bg-stone-800 text-stone-400 text-[10px] font-bold px-3 py-1.5 rounded-lg">{totalTiffins} tiffins</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 bg-stone-100 p-1.5 rounded-2xl mb-6">
+          <button className="flex-1 py-2 rounded-xl text-xs font-bold text-stone-400 flex items-center justify-center gap-2"><span className="opacity-50">&#9871;</span> Pack</button>
+          <button className="flex-1 py-2 rounded-xl text-xs font-bold text-stone-400 flex items-center justify-center gap-2"><span className="opacity-50">&#9871;</span> Dispatch</button>
+          <button className="flex-1 py-2 rounded-xl text-xs font-bold text-stone-800 bg-white shadow-sm flex items-center justify-center gap-2"><span className="text-stone-300">&#9871;</span> Route</button>
+        </div>
+
+        {/* Group Cards */}
+        <div className="space-y-4">
+          {groupKeys.map(function(gName, idx) {
+            var gOrders = groups[gName];
+            var address = gOrders[0].customer.address;
+            var allDelivered = gOrders.every(function(o){ return o.order.status === "delivered"; });
+            var anyTransit = gOrders.some(function(o){ return o.order.status === "out"; });
+            
+            var stdCount = gOrders.filter(function(o){ return (o.customer.food||"").toLowerCase().includes("standard"); }).length;
+            var jainCount = gOrders.filter(function(o){ return (o.customer.food||"").toLowerCase().includes("jain"); }).length;
+            var dietCount = gOrders.filter(function(o){ return (o.customer.food||"").toLowerCase().includes("diet"); }).length;
+            var regularCount = gOrders.length - stdCount - jainCount - dietCount;
+
+            var advanceIds = gOrders.filter(function(o){ return o.order.status !== "delivered"; }).map(function(o){ return o.order.id; });
+            var nextAction = anyTransit ? "Deliver All \u2705" : "Pick Up \ud83d\udeb4";
+
+            return (
+              <div key={gName} className={"bg-white rounded-[24px] border border-stone-100 p-5 shadow-sm " + (allDelivered?"opacity-60 grayscale-[50%]":"")}>
+                <p className="text-[10px] font-extrabold text-stone-400 tracking-wider uppercase mb-1">STOP {idx+1} OF {numGroups}</p>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-black text-stone-800 leading-tight">{gName}</h3>
+                    <p className="text-xs text-stone-400 mt-0.5">{address}</p>
+                  </div>
+                  <a href={"https://www.google.com/maps/dir/?api=1&destination="+encodeURIComponent(gName+" "+address)} target="_blank" rel="noreferrer" className="w-10 h-10 bg-stone-50 rounded-full flex items-center justify-center text-lg shadow-sm border border-stone-100 active:scale-95 transition-transform" title="Navigate">\ud83d\uddfa\ufe0f</a>
+                </div>
+                
+                {/* Stats Row */}
+                <div className="flex flex-wrap gap-2 mt-4 text-[10px] font-bold text-stone-600">
+                  <span className="bg-stone-100 px-2.5 py-1.5 rounded-md flex items-center gap-1.5"><span className="text-stone-400">\ud83c\udf71</span> {gOrders.length} tiffins</span>
+                  <span className="bg-stone-100 px-2.5 py-1.5 rounded-md flex items-center gap-1.5"><span className="text-stone-400">\ud83d\udc64</span> {gOrders.length}</span>
+                  {stdCount > 0 && <span className="bg-stone-50 border border-stone-100 px-2.5 py-1.5 rounded-md text-stone-500">{stdCount}&times; Standard</span>}
+                  {jainCount > 0 && <span className="bg-green-50 text-green-700 px-2.5 py-1.5 rounded-md">{jainCount}&times; Jain</span>}
+                  {dietCount > 0 && <span className="bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-md">{dietCount}&times; Diet</span>}
+                  {regularCount > 0 && <span className="bg-stone-50 border border-stone-100 px-2.5 py-1.5 rounded-md text-stone-500">{regularCount}&times; Regular</span>}
+                </div>
+                
+                {/* Customers */}
+                <div className="mt-5 border-t border-stone-100">
+                  {gOrders.map(function(o, i) {
+                     var c = o.customer;
+                     var isJain = (c.food||"").toLowerCase().includes("jain");
+                     var isDiet = (c.food||"").toLowerCase().includes("diet");
+                     var isStd = (c.food||"").toLowerCase().includes("standard");
+                     var initials = c.name.split(" ").map(function(n){return n[0];}).join("").substring(0,2).toUpperCase();
+                     
+                     return (
+                       <div key={c.id} className={"py-3 flex items-center justify-between " + (i!==gOrders.length-1?"border-b border-stone-50":"")}>
+                         <div className="flex items-center gap-3">
+                           <div className="w-8 h-8 rounded-full bg-stone-100 text-stone-500 font-bold text-xs flex items-center justify-center shrink-0">{initials}</div>
+                           <p className="text-sm font-bold text-stone-700">{c.name}</p>
+                         </div>
+                         <div className="text-right">
+                           <span className={"text-[10px] font-bold block " + (isJain?"text-green-700":isDiet?"text-blue-600":"text-stone-400")}>
+                             1&times;<br/>{isJain?"Jain":isDiet?"Diet":isStd?"Standard":c.food||"Regular"}
+                           </span>
+                         </div>
+                       </div>
+                     );
+                  })}
+                </div>
+
+                {/* Bulk Advance Button */}
+                {!allDelivered && (
+                  <div className="flex gap-2 mt-4">
+                    <button onClick={function(){advanceGroup(advanceIds);}} className={"flex-1 py-3 rounded-xl text-sm font-black text-white active:scale-95 transition-transform " + (anyTransit ? "bg-green-500 shadow-lg shadow-green-500/20" : "bg-amber-500 shadow-lg shadow-amber-500/20")}>
+                      {nextAction}
+                    </button>
+                    <button onClick={function(){setRiderNext(advanceIds[0]);}} className="w-16 py-3 bg-stone-100 rounded-xl text-lg flex items-center justify-center active:scale-95 transition-transform border border-stone-200" title="Set as Next">
+                      ⭐️
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Ungrouped */}
+        {ungrouped.length > 0 && (
+          <div className="mt-8">
+            <h3 className="text-xs font-black text-stone-400 tracking-wider uppercase mb-3">Ungrouped Orders</h3>
+            <div className="space-y-3">
+               {ungrouped.map(function(o) {
+                 var c = o.customer;
+                 var isJain = (c.food||"").toLowerCase().includes("jain");
+                 var isDiet = (c.food||"").toLowerCase().includes("diet");
+                 var initials = c.name.split(" ").map(function(n){return n[0];}).join("").substring(0,2).toUpperCase();
+                 return (
+                   <div key={c.id} className="bg-white rounded-[20px] border border-stone-100 p-4 flex items-center justify-between shadow-sm">
+                     <div className="flex items-center gap-3">
+                       <div className="w-10 h-10 rounded-full bg-stone-100 text-stone-500 font-bold text-sm flex items-center justify-center shrink-0">{initials}</div>
+                       <div>
+                         <p className="text-sm font-bold text-stone-800">{c.name}</p>
+                         <p className="text-[10px] text-stone-400 mt-0.5 font-medium max-w-[150px] truncate">{c.address}</p>
+                       </div>
+                     </div>
+                     <div className="flex flex-col items-end gap-2">
+                       <span className={"text-[10px] font-bold " + (isJain?"text-green-700":isDiet?"text-blue-600":"text-stone-400")}>{c.food||"Regular"}</span>
+                       {o.order.status !== "delivered" ? (
+                         <div className="flex gap-1.5">
+                           <button onClick={function(){setRiderNext(c.id);}} className="bg-stone-100 text-stone-600 text-[10px] px-2 py-1.5 rounded-lg border border-stone-200" title="Next">⭐️</button>
+                           <button onClick={function(){advance(c.id);}} className="bg-blue-600 text-white text-[10px] px-3 py-1.5 rounded-lg font-bold">{o.order.status==="out"?"Deliver ✅":"Pick Up 🚴"}</button>
+                         </div>
+                       ) : (
+                         <span className="text-[10px] text-green-500 font-bold">Delivered ✅</span>
+                       )}
+                     </div>
+                   </div>
+                 );
+               })}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-8 pt-6 border-t border-stone-200">
+           <button onClick={logout} className="w-full py-3 text-stone-400 font-semibold text-sm">&larr; Switch Role</button>
+           <button onClick={resetDay} className="w-full py-3 text-red-400 font-semibold text-sm mt-2">Reset Day (Debug)</button>
+        </div>
       </div>
     </div>
   );
@@ -393,7 +561,7 @@ function DeliveryView(props) {
 // ══════════════════════════════════════════════════════════════════════════════
 // CUSTOMER VIEW
 // ══════════════════════════════════════════════════════════════════════════════
-function CustomerView(props) {
+function OldCustomerView(props) {
   var customer=props.customer, order=props.order, paid=props.paid;
   var payStatus=props.payStatus, notifs=props.notifs, onRead=props.onRead;
   var curMonLabel=props.curMonLabel, logout=props.logout;
@@ -414,7 +582,8 @@ function CustomerView(props) {
 
   var delivSt = order ? DST[order.status] : null;
   var paySt   = PST[payStatus] || PST.unpaid;
-  var unread  = notifs.filter(function(n){return !n.read;}).length;
+  var lastRead = customer.lastReadAt ? (customer.lastReadAt.seconds || new Date(customer.lastReadAt).getTime() / 1000) : 0;
+  var unread  = notifs.filter(function(n){return n.createdAt > lastRead;}).length;
   var wDates  = weekDates(THIS_WEEK);
 
   var tabs = [
@@ -452,23 +621,26 @@ function CustomerView(props) {
       <div className="p-4 max-w-lg mx-auto space-y-4 pb-8">
 
         {tab==="home" && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
-              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">Today's Order</p>
-              <div className="flex items-start gap-3">
-                <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">🍱</div>
-                <div className="flex-1">
-                  <p className="font-black text-stone-800">{customer.food}</p>
-                  <p className="text-xs text-stone-400 mt-0.5 capitalize">{customer.plan} plan</p>
-                  {delivSt && <span className={"inline-block mt-2 text-xs px-2.5 py-1 rounded-full font-bold " + delivSt.badge}>{delivSt.label}</span>}
+          <div className="space-y-5">
+            <div className="bg-gradient-to-br from-green-500 to-emerald-700 rounded-3xl p-5 shadow-lg shadow-green-600/30 text-white relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl -rotate-12 translate-x-4 -translate-y-4">🍽️</div>
+              <div className="relative z-10">
+                <p className="text-xs font-bold text-green-100 uppercase tracking-widest mb-3">Today's Meal</p>
+                <div className="flex items-start gap-4">
+                  <div className="flex-1">
+                    <h2 className="text-3xl font-black">{customer.food || "Regular Meal"}</h2>
+                    <p className="text-sm text-green-100 mt-1 capitalize font-medium bg-black/20 inline-block px-3 py-1 rounded-full">{customer.plan} Plan</p>
+                  </div>
                 </div>
+                {delivSt && <span className={"inline-block mt-4 text-xs px-3 py-1.5 rounded-full font-black uppercase tracking-wider bg-white " + (order.status==="delivered"?"text-green-700":order.status==="out"?"text-blue-700":"text-amber-700")}>{delivSt.label}</span>}
               </div>
-              {order && order.status==="out" && <div className="mt-3 bg-blue-50 rounded-xl p-3 border border-blue-100"><p className="text-blue-700 text-sm font-bold">🚴 Your food is on the way!</p></div>}
-              {order && order.status==="delivered" && <div className="mt-3 bg-green-50 rounded-xl p-3 border border-green-100"><p className="text-green-700 text-sm font-bold">✅ Delivered! Enjoy your meal 🙏</p></div>}
+              
+              {order && order.status==="out" && <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-3 border border-white/30"><p className="text-white text-sm font-bold flex items-center gap-2"><span>🚴</span> Your food is on the way!</p></div>}
+              {order && order.status==="delivered" && <div className="mt-4 bg-white/20 backdrop-blur-sm rounded-xl p-3 border border-white/30"><p className="text-white text-sm font-bold flex items-center gap-2"><span>✅</span> Delivered! Enjoy your meal.</p></div>}
             </div>
 
             {todayMenu && todayMenu.items.length>0 && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <div className="bg-white rounded-[24px] p-5 shadow-sm border border-stone-100">
                 <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">📋 Today's Menu</p>
                 <div className="flex flex-wrap gap-1.5">
                   {todayMenu.items.map(function(item,i){return <span key={i} className="bg-orange-50 text-orange-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-orange-100">{item}</span>;})}
@@ -558,15 +730,16 @@ function CustomerView(props) {
           ) : (
             <div className="space-y-3">
               {notifs.map(function(n){
+                var isUnread = n.createdAt > lastRead;
                 return (
-                  <div key={n.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (!n.read?"border-green-200 bg-green-50/60":"border-stone-100")}>
+                  <div key={n.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (isUnread?"border-green-200 bg-green-50/60":"border-stone-100")}>
                     <div className="flex gap-3 items-start">
                       <span className="text-2xl flex-shrink-0">{n.icon}</span>
                       <div className="flex-1">
                         <p className="text-sm font-bold text-stone-800">{n.msg}</p>
                         <p className="text-xs text-stone-400 mt-1">{n.date}</p>
                       </div>
-                      {!n.read && <span className="w-2.5 h-2.5 bg-green-500 rounded-full flex-shrink-0 mt-1"></span>}
+                      {isUnread && <span className="w-2.5 h-2.5 bg-green-500 rounded-full flex-shrink-0 mt-1"></span>}
                     </div>
                   </div>
                 );
@@ -601,13 +774,16 @@ function ManagerView(props) {
   var spS=useState({}); var showPart=spS[0],setShowPart=spS[1];
   var sfS=useState(false); var showForm=sfS[0],setShowForm=sfS[1];
   var eiS=useState(null); var editId=eiS[0],setEditId=eiS[1];
-  var fmS=useState({name:"",phone:"",address:"",plan:"daily",food:"",rate:""}); var form=fmS[0],setForm=fmS[1];
+  var fmS=useState({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:""}); var form=fmS[0],setForm=fmS[1];
   var srS=useState(""); var search=srS[0],setSearch=srS[1];
   var cpS=useState(false); var copied=cpS[0],setCopied=cpS[1];
   var ndS=useState(delivPin); var newDP=ndS[0],setNewDP=ndS[1];
   var nmS=useState(""); var newMP=nmS[0],setNewMP=nmS[1];
   var psS=useState(false); var pinSaved=psS[0],setPinSaved=psS[1];
   var dcS=useState(null); var delConfirm=dcS[0],setDelConfirm=dcS[1];
+  var wgS=useState(props.whatsappGroup||""); var wg=wgS[0],setWg=wgS[1];
+  
+  useEffect(function() { setWg(props.whatsappGroup||""); }, [props.whatsappGroup]);
 
   var pmStats = useMemo(function(){
     var active=customers.filter(function(c){return c.active&&c.rate>0;});
@@ -633,16 +809,19 @@ function ManagerView(props) {
 
   var summaryMsg = "🍱 *Delivery Update – "+TODAY_STR+"*\n\n✅ Delivered: "+stats.delivered+"/"+stats.total+"\n🚴 On the way: "+stats.out+"\n⏳ Pending: "+stats.pending+"\n\nThank you for your trust! 🙏";
 
-  function openAdd() { setEditId(null); setForm({name:"",phone:"",address:"",plan:"daily",food:"",rate:""}); setShowForm(true); }
-  function openEdit(c) { setEditId(c.id); setForm({name:c.name,phone:c.phone,address:c.address,plan:c.plan,food:c.food,rate:String(c.rate||"")}); setShowForm(true); }
+  function openAdd() { setEditId(null); setForm({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:""}); setShowForm(true); }
+  function openEdit(c) { setEditId(c.id); setForm({name:c.name,phone:c.phone,address:c.address,group:c.group||"",plan:c.plan,food:c.food,rate:String(c.rate||""),deliveryOrder:String(c.deliveryOrder||"")}); setShowForm(true); }
 
   function save() {
     if(!form.name.trim()) return;
     var rate = parseInt(form.rate)||0;
+    var dOrder = parseInt(form.deliveryOrder);
+    if(isNaN(dOrder)) dOrder = 999;
+    
     if(editId) {
-      setCustomers(customers.map(function(c){ return c.id===editId?Object.assign({},c,form,{rate:rate}):c; }));
+      setCustomers(customers.map(function(c){ return c.id===editId?Object.assign({},c,form,{rate:rate,deliveryOrder:dOrder}):c; }));
     } else {
-      var nc = Object.assign({},form,{rate:rate,id:Date.now(),active:true});
+      var nc = Object.assign({},form,{rate:rate,deliveryOrder:dOrder,id:Date.now(),active:true});
       var updated = customers.concat([nc]);
       setCustomers(updated);
       setOrders(makeOrders(updated).map(function(no){ return orders.find(function(o){return o.id===no.id;})||no; }));
@@ -651,9 +830,15 @@ function ManagerView(props) {
   }
 
   function togglePause(c) {
-    setCustomers(customers.map(function(x){ return x.id===c.id?Object.assign({},x,{active:!x.active}):x; }));
-    if(c.active) setOrders(orders.filter(function(o){return o.id!==c.id;}));
-    else setOrders(orders.concat([{id:c.id,status:"pending"}]));
+    if (c.active) {
+      var dateStr = window.prompt("Pause Customer. Enter auto-resume date (YYYY-MM-DD) or leave empty to pause indefinitely:");
+      if (dateStr === null) return; // Cancelled
+      setCustomers(customers.map(function(x){ return x.id===c.id?Object.assign({},x,{active:false, resumeDate: dateStr.trim()}):x; }));
+      setOrders(orders.filter(function(o){return o.id!==c.id;}));
+    } else {
+      setCustomers(customers.map(function(x){ var copy = Object.assign({},x,{active:true}); delete copy.resumeDate; return copy; }));
+      setOrders(orders.concat([{id:c.id,status:"pending"}]));
+    }
   }
 
   function confirmDel(id) {
@@ -682,6 +867,7 @@ function ManagerView(props) {
   function savePins() {
     if(newDP.length>=3) setDelivPin(newDP);
     if(newMP.length>=4) setMgrPin(newMP);
+    if(wg !== props.whatsappGroup) props.saveWhatsappGroup(wg);
     setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000);
   }
 
@@ -855,39 +1041,69 @@ function ManagerView(props) {
 
         {tab==="customers" && (
           <div className="space-y-3">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center mb-4">
               <p className="text-sm font-bold text-stone-600">{customers.length} customers</p>
               <button onClick={openAdd} className="bg-orange-600 text-white px-4 py-2 rounded-full text-sm font-black">+ Add</button>
             </div>
-            <input className={INP} placeholder="🔍  Search…" value={search} onChange={function(e){setSearch(e.target.value);}}/>
-            {filteredC.map(function(c){
-              return (
-                <div key={c.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (c.active?"border-stone-100":"border-stone-200 opacity-60")}>
-                  <div className="flex gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <p className="font-black text-stone-800">{c.name}</p>
-                        <span className={"text-xs px-2 py-0.5 rounded-full font-bold " + (c.plan==="monthly"?"bg-purple-100 text-purple-700":"bg-blue-100 text-blue-700")}>{c.plan}</span>
-                        {!c.active && <span className="text-xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">paused</span>}
-                      </div>
-                      <p className="text-xs text-stone-500 mt-1">📞 {c.phone}</p>
-                      <p className="text-xs text-stone-500 mt-0.5">📍 {c.address}</p>
-                      <p className="text-xs text-stone-500 mt-0.5">🍴 {c.food}</p>
-                      {c.rate>0?<p className="text-xs text-orange-600 font-bold mt-1">💰 {fmt(c.rate)}/month</p>:<p className="text-xs text-red-400 font-semibold mt-1">⚠️ No rate set</p>}
-                    </div>
-                    <div className="flex flex-col gap-1.5 flex-shrink-0">
-                      <button onClick={function(){openEdit(c);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg">Edit</button>
-                      <button onClick={function(){togglePause(c);}} className={"text-xs font-bold px-2.5 py-1 rounded-lg " + (c.active?"text-amber-600 bg-amber-50":"text-green-600 bg-green-50")}>{c.active?"Pause":"Resume"}</button>
-                      <button onClick={function(){confirmDel(c.id);}} className={"text-xs font-bold px-2.5 py-1 rounded-lg " + (delConfirm===c.id?"bg-red-600 text-white":"text-red-500 bg-red-50")}>{delConfirm===c.id?"Sure?":"Delete"}</button>
+            <input className={INP + " mb-2"} placeholder="🔍  Search…" value={search} onChange={function(e){setSearch(e.target.value);}}/>
+            
+            {/* Render grouped customers */}
+            {(() => {
+              var groups = {
+                "Monthly - Jain": [],
+                "Monthly - Normal": [],
+                "Daily - Jain": [],
+                "Daily - Normal": [],
+              };
+              
+              filteredC.forEach(function(c) {
+                var plan = c.plan === "monthly" ? "Monthly" : "Daily";
+                var foodType = (c.food || "").toLowerCase().includes("jain") ? "Jain" : "Normal";
+                var groupName = plan + " - " + foodType;
+                if(groups[groupName]) groups[groupName].push(c);
+              });
+              
+              return Object.keys(groups).map(function(gName) {
+                var cList = groups[gName];
+                if(cList.length === 0) return null;
+                return (
+                  <div key={gName} className="mt-6 first:mt-2">
+                    <h3 className="text-xs font-black text-stone-400 tracking-wider uppercase mb-3 flex items-center gap-2">
+                      {gName.includes("Jain") ? "🌿" : "🍛"} {gName} <span className="bg-stone-200 text-stone-500 px-2 py-0.5 rounded-full">{cList.length}</span>
+                    </h3>
+                    <div className="space-y-3">
+                      {cList.map(function(c) {
+                        return (
+                          <div key={c.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (c.active?"border-stone-100":"border-stone-200 opacity-60")}>
+                            <div className="flex gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <p className="font-black text-stone-800">{c.name}</p>
+                                  {c.group && <span className="text-[10px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full border border-stone-200">🏢 {c.group}</span>}
+                                  {!c.active && <span className="text-[10px] bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-100">Paused {c.resumeDate ? "(until " + c.resumeDate + ")" : ""}</span>}
+                                </div>
+                                <p className="text-xs text-stone-500 mt-1.5">📞 {c.phone} &middot; 📍 {c.address}</p>
+                                <p className="text-xs font-medium text-stone-600 mt-0.5">🍴 {getDefaultFood(c.food)}</p>
+                                {c.rate>0?<p className="text-xs text-orange-600 font-bold mt-1.5">💰 {fmt(c.rate)}/month</p>:<p className="text-xs text-red-400 font-semibold mt-1.5">⚠️ No rate set</p>}
+                              </div>
+                              <div className="flex flex-col gap-1.5 flex-shrink-0">
+                                <button onClick={function(){openEdit(c);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-100">Edit</button>
+                                <button onClick={function(){togglePause(c);}} className={"text-xs font-bold px-2.5 py-1.5 rounded-lg border " + (c.active?"text-amber-600 bg-amber-50 border-amber-100":"text-green-600 bg-green-50 border-green-100")}>{c.active?"Pause":"Resume"}</button>
+                                <button onClick={function(){confirmDel(c.id);}} className={"text-xs font-bold px-2.5 py-1.5 rounded-lg border " + (delConfirm===c.id?"bg-red-600 text-white border-red-600":"text-red-500 bg-red-50 border-red-100")}>{delConfirm===c.id?"Sure?":"Delete"}</button>
+                              </div>
+                            </div>
+                            <div className="flex gap-2 mt-4 pt-3 border-t border-stone-50">
+                              <a href={"tel:+91"+c.phone} className="flex-1 text-center py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-bold text-stone-600">📞 Call</a>
+                              <a href={waTo(c.phone,"Hi "+c.name+"!")} target="_blank" rel="noreferrer" className="flex-1 text-center py-2 bg-green-50 border border-green-200 rounded-xl text-xs font-bold text-green-600">💬 WhatsApp</a>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                  <div className="flex gap-2 mt-3">
-                    <a href={"tel:+91"+c.phone} className="flex-1 text-center py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-bold text-stone-600">📞 Call</a>
-                    <a href={waTo(c.phone,"Hi "+c.name+"!")} target="_blank" rel="noreferrer" className="flex-1 text-center py-2 bg-green-50 border border-green-200 rounded-xl text-xs font-bold text-green-600">💬 WhatsApp</a>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
         )}
 
@@ -1003,8 +1219,13 @@ function ManagerView(props) {
                   <p className="text-xs text-stone-400 mb-1.5">Leave blank to keep current</p>
                   <input className={INP} placeholder="New 4+ digit PIN" type="password" inputMode="numeric" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={8}/>
                 </div>
+                <div>
+                  <label className="text-xs font-bold text-stone-500 uppercase">WhatsApp Group Invite Link</label>
+                  <p className="text-xs text-stone-400 mb-1.5">For sharing the weekly menu</p>
+                  <input className={INP} placeholder="https://chat.whatsapp.com/..." value={wg} onChange={function(e){setWg(e.target.value);}}/>
+                </div>
               </div>
-              <button onClick={savePins} className={"mt-4 w-full py-3 rounded-xl text-sm font-black " + (pinSaved?"bg-green-500 text-white":"bg-orange-600 text-white")}>{pinSaved?"✓ Saved!":"Save PINs"}</button>
+              <button onClick={savePins} className={"mt-4 w-full py-3 rounded-xl text-sm font-black " + (pinSaved?"bg-green-500 text-white":"bg-orange-600 text-white")}>{pinSaved?"✓ Saved!":"Save Settings"}</button>
             </div>
             <button onClick={logout} className="w-full py-3 text-stone-400 font-semibold text-sm">← Switch Role</button>
           </div>
@@ -1021,8 +1242,10 @@ function ManagerView(props) {
                 {k:"name",   l:"Name *",          p:"Full name",               m:"text"},
                 {k:"phone",  l:"Phone",            p:"10-digit mobile",         m:"numeric"},
                 {k:"address",l:"Address",          p:"Delivery address",        m:"text"},
+                {k:"group",  l:"Building / Group", p:"e.g. Tower A, Tech Park", m:"text"},
                 {k:"food",   l:"Food Order",       p:"e.g. Veg Thali, Dal Rice",m:"text"},
                 {k:"rate",   l:"Monthly Rate (₹)", p:"e.g. 2500",             m:"numeric"},
+                {k:"deliveryOrder", l:"Delivery Sequence", p:"e.g. 1, 2, 3...", m:"numeric"},
               ].map(function(f){
                 return (
                   <div key={f.k}>
@@ -1071,6 +1294,8 @@ export default function App() {
   const [mgrPin, setMgrPin] = useState("Set (Hashed)");
   const [notifs, setNotifs] = useState({});
   const [custPhone, setCustPhone] = useState("");
+  const [whatsappGroup, setWhatsappGroup] = useState("");
+  const [legacyMode, setLegacyMode] = useState(false);
 
   const [mgrPinHash, setMgrPinHash] = useState("");
   const [delivPinHash, setDelivPinHash] = useState("");
@@ -1082,6 +1307,16 @@ export default function App() {
   const [pinErr, setPinErr] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phonErr, setPhonErr] = useState(false);
+
+  useEffect(() => {
+    const savedRole = sessionStorage.getItem("tiffin_role");
+    if (savedRole) {
+      setRole(savedRole);
+      setScreen("app");
+      if (savedRole === "customer") setCustPhone(sessionStorage.getItem("tiffin_phone") || "");
+      if (savedRole === "manager" || savedRole === "delivery") setUserPin(sessionStorage.getItem("tiffin_userpin") || "");
+    }
+  }, []);
 
   // ─── Real-time Sync ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1099,7 +1334,9 @@ export default function App() {
           plan: d.plan,
           food: d.food,
           rate: d.rate,
-          active: d.active
+          active: d.active,
+          deliveryOrder: d.deliveryOrder,
+          resumeDate: d.resumeDate
         });
       });
       setCust(list);
@@ -1117,7 +1354,8 @@ export default function App() {
             id: cid,
             status: data[cid].status,
             updatedAt: data[cid].updatedAt,
-            updatedBy: data[cid].updatedBy
+            updatedBy: data[cid].updatedBy,
+            riderNextFlag: data[cid].riderNextFlag || false
           });
         });
         setOrds(list);
@@ -1154,6 +1392,7 @@ export default function App() {
         const data = snapshot.data();
         setMgrPinHash(data.mgrPinHash);
         setDelivPinHash(data.delivPinHash);
+        setWhatsappGroup(data.whatsappGroup || "");
       } else {
         const defaultMgrHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
         const defaultDelivHash = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4";
@@ -1186,15 +1425,18 @@ export default function App() {
         const dateStr = d.createdAt
           ? new Date(d.createdAt.seconds * 1000).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
           : DATE_STR;
+        const createdAtSeconds = d.createdAt ? d.createdAt.seconds : 0;
         list.push({
           id: doc.id,
           type: d.type,
           msg: d.message,
           icon: d.type === "payment" ? "💰" : "🚴",
-          read: d.read,
-          date: dateStr
+          date: dateStr,
+          createdAt: createdAtSeconds
         });
       });
+      // Sort notifications by newest first
+      list.sort((a, b) => b.createdAt - a.createdAt);
       setNotifs((prev) => {
         const updated = { ...prev };
         updated[custPhone] = list;
@@ -1214,6 +1456,8 @@ export default function App() {
     }
     setMgrErr(false);
     setUserPin(mgrInput);
+    sessionStorage.setItem("tiffin_role", "manager");
+    sessionStorage.setItem("tiffin_userpin", mgrInput);
     setMgrInput("");
     setRole("manager");
     setScreen("app");
@@ -1227,6 +1471,8 @@ export default function App() {
     }
     setPinErr(false);
     setUserPin(pinInput);
+    sessionStorage.setItem("tiffin_role", "delivery");
+    sessionStorage.setItem("tiffin_userpin", pinInput);
     setPinInput("");
     setRole("delivery");
     setScreen("app");
@@ -1241,11 +1487,16 @@ export default function App() {
     }
     setPhonErr(false);
     setCustPhone(ph);
+    sessionStorage.setItem("tiffin_role", "customer");
+    sessionStorage.setItem("tiffin_phone", ph);
     setRole("customer");
     setScreen("app");
   }
 
   function logout() {
+    sessionStorage.removeItem("tiffin_role");
+    sessionStorage.removeItem("tiffin_userpin");
+    sessionStorage.removeItem("tiffin_phone");
     setRole(null);
     setScreen("roleSelect");
     setPhoneInput("");
@@ -1269,6 +1520,26 @@ export default function App() {
     } catch (e) {
       console.error(e);
       alert("Error updating status: " + e.message);
+    }
+  }
+
+  async function advanceGroupStatus(ids) {
+    try {
+      await Promise.all(ids.map(id => advanceStatus(id)));
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  async function setRiderNext(customerId) {
+    const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
+    const snap = await getDoc(orderDocRef);
+    if(snap.exists()) {
+      const data = snap.data();
+      if(data[String(customerId)]) {
+        data[String(customerId)].riderNextFlag = true;
+        await setDoc(orderDocRef, data);
+      }
     }
   }
 
@@ -1389,6 +1660,7 @@ export default function App() {
         name: c.name,
         phone: c.phone,
         address: c.address,
+        group: c.group || "",
         plan: c.plan,
         food: c.food,
         rate: c.rate,
@@ -1524,8 +1796,20 @@ export default function App() {
     return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600" btn="bg-green-600 hover:bg-green-700" value={phoneInput} onChange={setPhoneInput} error={phonErr ? "Number not found. Contact the business owner." : null} onBack={function () { setScreen("roleSelect"); setPhonErr(false); }} onSubmit={loginCust} hint="Use the number given to the business" isPhone={true} />;
   }
 
+  if (role === "manager") {
+    if (legacyMode) {
+      return (
+        <div>
+          <button onClick={() => setLegacyMode(false)} className="w-full bg-amber-500 text-white font-bold py-2 shadow-md">← Back to Modern Dashboard</button>
+          <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} resetDay={resetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} delivPin={delivPin} setDelivPin={updateDelivPin} mgrPin={mgrPin} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} logout={logout} />
+        </div>
+      );
+    }
+    return <NewManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} stats={stats} payStats={payStats} logout={logout} openLegacy={() => setLegacyMode(true)} resetDay={resetDay} />;
+  }
+
   if (role === "delivery") {
-    return <DeliveryView orders={displayOrders} customers={cust} advance={advanceStatus} resetDay={resetDay} logout={logout} stats={stats} />;
+    return <DeliveryView orders={displayOrders} customers={cust} advance={advanceStatus} advanceGroup={advanceGroupStatus} setRiderNext={setRiderNext} resetDay={resetDay} logout={logout} stats={stats} />;
   }
 
   if (role === "customer") {
@@ -1539,10 +1823,9 @@ export default function App() {
         payStatus={c ? getPayStat(c.id, CUR_MON, c.rate) : "unpaid"}
         notifs={cNotifs}
         onRead={async function () {
-          const unreadNotifs = cNotifs.filter((n) => !n.read);
-          for (const n of unreadNotifs) {
-            const docRef = doc(db, "businesses", BUSINESS_ID, "notifications", custPhone, "messages", n.id);
-            await updateDoc(docRef, { read: true });
+          if (c) {
+            const cRef = doc(db, "businesses", BUSINESS_ID, "customers", String(c.id));
+            await updateDoc(cRef, { lastReadAt: new Date() });
           }
         }}
         curMonLabel={monLabel(CUR_MON)}
@@ -1575,6 +1858,12 @@ export default function App() {
       setDelivPin={updateDelivPin}
       mgrPin={mgrPin}
       setMgrPin={updateMgrPin}
+      whatsappGroup={whatsappGroup}
+      saveWhatsappGroup={async function(link) {
+        const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
+        await setDoc(docRef, { whatsappGroup: link }, { merge: true });
+        setWhatsappGroup(link);
+      }}
       logout={logout}
     />
   );
