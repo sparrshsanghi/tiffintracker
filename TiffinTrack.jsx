@@ -771,7 +771,7 @@ function ManagerView(props) {
   var spS=useState({}); var showPart=spS[0],setShowPart=spS[1];
   var sfS=useState(false); var showForm=sfS[0],setShowForm=sfS[1];
   var eiS=useState(null); var editId=eiS[0],setEditId=eiS[1];
-  var fmS=useState({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:""}); var form=fmS[0],setForm=fmS[1];
+  var fmS=useState({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:"", paused:false, pauseFrom:"", pauseTo:""}); var form=fmS[0],setForm=fmS[1];
   var srS=useState(""); var search=srS[0],setSearch=srS[1];
   var cpS=useState(false); var copied=cpS[0],setCopied=cpS[1];
   var ndS=useState(delivPin); var newDP=ndS[0],setNewDP=ndS[1];
@@ -806,8 +806,8 @@ function ManagerView(props) {
 
   var summaryMsg = "🍱 *Delivery Update – "+TODAY_STR+"*\n\n✅ Delivered: "+stats.delivered+"/"+stats.total+"\n🚴 On the way: "+stats.out+"\n⏳ Pending: "+stats.pending+"\n\nThank you for your trust! 🙏";
 
-  function openAdd() { setEditId(null); setForm({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:""}); setShowForm(true); }
-  function openEdit(c) { setEditId(c.id); setForm({name:c.name,phone:c.phone,address:c.address,group:c.group||"",plan:c.plan,food:c.food,rate:String(c.rate||""),deliveryOrder:String(c.deliveryOrder||"")}); setShowForm(true); }
+  function openAdd() { setEditId(null); setForm({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:"", paused:false, pauseFrom:"", pauseTo:""}); setShowForm(true); }
+  function openEdit(c) { setEditId(c.id); setForm({name:c.name,phone:c.phone,address:c.address,group:c.group||"",plan:c.plan,food:c.food,rate:String(c.rate||""),deliveryOrder:String(c.deliveryOrder||""), paused:c.paused||false, pauseFrom:c.pauseFrom||"", pauseTo:c.pauseTo||""}); setShowForm(true); }
 
   function save() {
     if(!form.name.trim()) return;
@@ -827,13 +827,13 @@ function ManagerView(props) {
   }
 
   function togglePause(c) {
-    if (c.active) {
+    if (c.active !== false && !c.paused) {
       var dateStr = window.prompt("Pause Customer. Enter auto-resume date (YYYY-MM-DD) or leave empty to pause indefinitely:");
       if (dateStr === null) return; // Cancelled
-      setCustomers(customers.map(function(x){ return x.id===c.id?Object.assign({},x,{active:false, resumeDate: dateStr.trim()}):x; }));
+      setCustomers(customers.map(function(x){ return x.id===c.id?Object.assign({},x,{paused:true, pauseFrom: TODAY.split("T")[0], pauseTo: dateStr.trim()}):x; }));
       setOrders(orders.filter(function(o){return o.id!==c.id;}));
     } else {
-      setCustomers(customers.map(function(x){ var copy = Object.assign({},x,{active:true}); delete copy.resumeDate; return copy; }));
+      setCustomers(customers.map(function(x){ var copy = Object.assign({},x,{active:true, paused:false, pauseFrom:"", pauseTo:""}); delete copy.resumeDate; return copy; }));
       setOrders(orders.concat([{id:c.id,status:"pending"}]));
     }
   }
@@ -1084,7 +1084,7 @@ function ManagerView(props) {
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <p className="font-black text-stone-800">{c.name}</p>
                                   {c.group && <span className="text-[10px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full border border-stone-200">🏢 {c.group}</span>}
-                                  {!c.active && <span className="text-[10px] bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-100">Paused {c.resumeDate ? "(until " + c.resumeDate + ")" : ""}</span>}
+                                  {(c.active === false || c.paused) && <span className="text-[10px] bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-100">Paused {c.pauseTo ? "until " + c.pauseTo : (c.resumeDate ? "(until " + c.resumeDate + ")" : "")}</span>}
                                 </div>
                                 <p className="text-xs text-stone-500 mt-1.5">📞 {c.phone} &middot; 📍 {c.address}</p>
                                 <p className="text-xs font-medium text-stone-600 mt-0.5">🍴 {getDefaultFood(c.food)}</p>
@@ -1092,7 +1092,7 @@ function ManagerView(props) {
                               </div>
                               <div className="flex flex-col gap-1.5 flex-shrink-0">
                                 <button onClick={function(){openEdit(c);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-100">Edit</button>
-                                <button onClick={function(){togglePause(c);}} className={"text-xs font-bold px-2.5 py-1.5 rounded-lg border " + (c.active?"text-amber-600 bg-amber-50 border-amber-100":"text-green-600 bg-green-50 border-green-100")}>{c.active?"Pause":"Resume"}</button>
+                                <button onClick={function(){togglePause(c);}} className={"text-xs font-bold px-2.5 py-1.5 rounded-lg border " + ((c.active!==false && !c.paused)?"text-amber-600 bg-amber-50 border-amber-100":"text-green-600 bg-green-50 border-green-100")}>{(c.active!==false && !c.paused)?"Pause":"Resume"}</button>
                                 <button onClick={function(){setDelConfirm(c.id);}} className="text-xs font-bold px-2.5 py-1.5 rounded-lg border text-red-500 bg-red-50 border-red-100">Delete</button>
                               </div>
                             </div>
@@ -1287,6 +1287,25 @@ function ManagerView(props) {
                   })}
                 </div>
               </div>
+              <div>
+                <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">Pause Delivery?</label>
+                <select className={INP+" mt-1"} value={form.paused ? "yes" : "no"} onChange={e => setForm(p => Object.assign({}, p, {paused: e.target.value === "yes"}))}>
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </div>
+              {form.paused && (
+                <div className="flex gap-2 mt-2">
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">From Date</label>
+                    <input type="date" className={INP+" mt-1"} value={form.pauseFrom} onChange={e => setForm(p => Object.assign({}, p, {pauseFrom: e.target.value}))} />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">To Date</label>
+                    <input type="date" className={INP+" mt-1"} value={form.pauseTo} onChange={e => setForm(p => Object.assign({}, p, {pauseTo: e.target.value}))} />
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={function(){setShowForm(false);}} className="flex-1 py-3.5 border-2 border-stone-200 rounded-2xl text-stone-600 font-bold">Cancel</button>
@@ -1661,7 +1680,8 @@ export default function App() {
     if (hashed !== mgrPinHash) {
       recordFailedAttempt("tiffin_mgr_lockout", 5, 60000);
       const ls = checkLockout("tiffin_mgr_lockout");
-      setMgrLockMsg(ls.locked ? `Too many attempts. Locked for 60s.` : "");
+      const attemptsLeft = 5 - ls.attempts;
+      setMgrLockMsg(ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : `Incorrect PIN. Please try again. Attempts remaining: ${attemptsLeft}`);
       setMgrErr(true);
       return;
     }
@@ -1690,7 +1710,8 @@ export default function App() {
     if (hashed !== delivPinHash) {
       recordFailedAttempt("tiffin_del_lockout", 5, 60000);
       const ls = checkLockout("tiffin_del_lockout");
-      setDelLockMsg(ls.locked ? `Too many attempts. Locked for 60s.` : "");
+      const attemptsLeft = 5 - ls.attempts;
+      setDelLockMsg(ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : `Incorrect PIN. Please try again. Attempts remaining: ${attemptsLeft}`);
       setPinErr(true);
       return;
     }
@@ -1987,7 +2008,13 @@ export default function App() {
 
   // ─── Stats and Selectors ──────────────────────────────────────────────────
   const displayOrders = useMemo(() => {
-    const activeCustomers = cust.filter((c) => c.active);
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const activeCustomers = cust.filter((c) => {
+      if (c.active === false) return false;
+      if (c.paused === true) return false;
+      if (c.pauseFrom && c.pauseTo && today >= c.pauseFrom && today <= c.pauseTo) return false;
+      return true;
+    });
     return activeCustomers.map((c) => {
       const order = ords.find((o) => String(o.id) === String(c.id));
       return order || {

@@ -99,8 +99,8 @@ export function DeliveryView(props) {
           </div>
           <div className="text-right flex flex-col items-end">
             <button onClick={logout} className="text-[10px] bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full mb-1 border border-stone-200">Exit</button>
-            <p className="text-2xl font-black text-stone-900 leading-none">
-              {done}<span className="text-stone-300 font-normal text-base">/{totalTiffins}</span>
+            <p className="text-sm font-black text-stone-900 leading-none mt-1">
+              Today's Deliveries ({totalTiffins})
             </p>
           </div>
         </div>
@@ -150,21 +150,22 @@ export function DeliveryView(props) {
                         <div className="flex items-start gap-2.5">
                           <HouseTag no={houseNoMatch} done={isDone} />
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
                               <p className="text-sm font-bold text-stone-800">{m.name}</p>
                               <Pill status={o.order.status} />
                             </div>
-                            <p className="text-xs text-stone-400 mt-0.5 leading-relaxed">{getDefaultFood(m.food)}</p>
+                            <p className="text-xs text-stone-500">{m.address}</p>
+                            <p className="text-xs text-stone-500">{m.group || gName}</p>
+                            <a href={`tel:${m.phone}`} className="inline-flex items-center gap-1 text-xs text-stone-500 mt-1 font-semibold text-blue-600 active:scale-95 transition-transform">
+                              📞 {m.phone}
+                            </a>
                             {!isDone && (
-                              <div className="mt-2 flex gap-2">
+                              <div className="mt-3">
                                 <MarkBtn
                                   status={o.order.status}
                                   onPacked={() => advance(m.id)}
                                   onDelivered={() => advance(m.id)}
                                 />
-                                <a href={`tel:${m.phone}`} className="flex items-center justify-center gap-1 text-xs font-bold text-stone-500 bg-stone-100 px-3 py-1.5 rounded-lg active:scale-95 transition-transform">
-                                  <Phone size={11} /> Call
-                                </a>
                               </div>
                             )}
                           </div>
@@ -198,24 +199,24 @@ export function DeliveryView(props) {
                   <Home size={17} className="text-stone-500" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
                     <p className="text-sm font-bold text-stone-800">{ind.name}</p>
                     <Pill status={o.order.status} />
                   </div>
-                  <p className="text-xs text-stone-500 flex items-center gap-1 mt-0.5">
-                    <MapPin size={10} className="flex-shrink-0" />{ind.address}
+                  <p className="text-xs text-stone-500 flex items-center gap-1">
+                    {ind.address}
                   </p>
-                  <p className="text-xs text-stone-400 mt-0.5">{getDefaultFood(ind.food)}</p>
+                  <p className="text-xs text-stone-500">{ind.group}</p>
+                  <a href={`tel:${ind.phone}`} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 mt-1 active:scale-95 transition-transform">
+                    📞 {ind.phone}
+                  </a>
                   {!isDone && (
-                    <div className="mt-2 flex gap-2">
+                    <div className="mt-3">
                       <MarkBtn
                         status={o.order.status}
                         onPacked={() => advance(ind.id)}
                         onDelivered={() => advance(ind.id)}
                       />
-                      <a href={`tel:${ind.phone}`} className="flex items-center justify-center gap-1 text-xs font-bold text-stone-500 bg-stone-100 px-3 py-1.5 rounded-lg active:scale-95 transition-transform">
-                        <Phone size={11} /> Call
-                      </a>
                     </div>
                   )}
                 </div>
@@ -453,10 +454,18 @@ export function ManagerView(props) {
   var logout=props.logout;
   const [tab, setTab] = useState("overview");
   const [exp, setExp] = useState({});
+  const [searchQuery, setSearchQuery] = useState("");
 
   var groups = {};
   var ungrouped = [];
+  const lowerQ = searchQuery.toLowerCase();
   customers.filter(c => c.active).forEach(function(c){
+    if (searchQuery && !(
+      c.name.toLowerCase().includes(lowerQ) ||
+      c.phone.includes(searchQuery) ||
+      (c.address || "").toLowerCase().includes(lowerQ) ||
+      (c.group || "").toLowerCase().includes(lowerQ)
+    )) return;
     var g = (c.group || "").trim();
     if(g) {
       if(!groups[g]) groups[g] = [];
@@ -549,8 +558,26 @@ export function ManagerView(props) {
             </div>
 
             <div className="mt-4">
-               <SectionLabel>Colonies</SectionLabel>
+               <input
+                 type="text"
+                 placeholder="🔍 Search by name, phone, or area..."
+                 value={searchQuery}
+                 onChange={e => setSearchQuery(e.target.value)}
+                 className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all shadow-sm"
+               />
             </div>
+
+            {Object.keys(groups).length === 0 && ungrouped.length === 0 && (
+              <div className="text-center py-10 text-stone-400">
+                <p className="font-semibold">No customers found.</p>
+              </div>
+            )}
+
+            {Object.keys(groups).length > 0 && (
+              <div className="mt-4">
+                 <SectionLabel>Colonies</SectionLabel>
+              </div>
+            )}
 
             {Object.keys(groups).map(gName => {
               const col = groups[gName];
