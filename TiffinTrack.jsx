@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   MapPin, Package, CheckCircle2, ChevronDown, ChevronUp,
   Phone, Bell, CreditCard, Home, Building2, UtensilsCrossed,
@@ -20,6 +20,12 @@ import {
   getDocs,
   getDoc
 } from "firebase/firestore";
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  connectAuthEmulator
+} from "firebase/auth";
 import { DeliveryView, CustomerView, ManagerView as NewManagerView } from "./src/Views.jsx";
 
 const firebaseConfig = {
@@ -34,12 +40,14 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 const BUSINESS_ID = "default";
 
-// Connect to Firestore emulator if running locally
+// Connect to emulators if running locally
 if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
   connectFirestoreEmulator(db, "127.0.0.1", 8080);
+  connectAuthEmulator(auth, "http://127.0.0.1:9099");
 }
 
 // Browser-compatible SHA-256 hash helper
@@ -1322,15 +1330,100 @@ export default function App() {
   const [custLockedUntil, setCustLockedUntil] = useState(0);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  useEffect(() => {
-    const savedRole = sessionStorage.getItem("tiffin_role");
-    if (savedRole) {
-      setRole(savedRole);
-      setScreen("app");
-      if (savedRole === "customer") setCustPhone(sessionStorage.getItem("tiffin_phone") || "");
-      if (savedRole === "manager" || savedRole === "delivery") setUserPin(sessionStorage.getItem("tiffin_userpin") || "");
+  // ─── Brute-force lockout helpers (persisted to sessionStorage so refresh doesn't bypass) ─
+  function getLockoutState(key) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) : { attempts: 0, lockedUntil: 0 };
+    } catch { return { attempts: 0, lockedUntil: 0 }; }
+  }
+  function setLockoutState(key, attempts, lockedUntil) {
+    sessionStorage.setItem(key, JSON.stringify({ attempts, lockedUntil }));
+  }
+  function checkLockout(key) {
+    const { attempts, lockedUntil } = getLockoutState(key);
+    if (Date.now() < lockedUntil) return { locked: true, secs: Math.ceil((lockedUntil - Date.now()) / 1000) };
+    return { locked: false, attempts };
+  }
+  function recordFailedAttempt(key, maxAttempts = 5, lockMs = 60000) {
+    const { attempts } = getLockoutState(key);
+    const next = attempts + 1;
+    if (next >= maxAttempts) {
+      setLockoutState(key, 0, Date.now() + lockMs);
+    } else {
+      setLockoutState(key, next, 0);
     }
+  }
+  function clearLockout(key) { sessionStorage.removeItem(key); }
+
+  // Lockout error messages
+  const [mgrLockMsg, setMgrLockMsg] = useState("");
+  const [delLockMsg, setDelLockMsg] = useState("");
+
+  // ─── Firebase Anonymous Auth ──────────────────────────────────────────────
+  const [authReady, setAuthReady] = useState(false);
+  const [firebaseUid, setFirebaseUid] = useState(null);
+
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setFirebaseUid(user.uid);
+        setAuthReady(true);
+      } else {
+        // Sign in anonymously — gives every session a real Firebase UID
+        // This is used by Firestore rules to require request.auth != null
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.error("Anonymous auth failed:", e);
+          setAuthReady(true); // Still allow app to load in degraded mode
+        }
+      }
+    });
+    return () => unsubAuth();
   }, []);
+
+  // ─── Secure session restoration — re-verify PIN hash against Firestore ────
+  const sessionRestored = useRef(false);
+
+  useEffect(() => {
+    if (!authReady || !mgrPinHash || !delivPinHash || sessionRestored.current) return;
+    sessionRestored.current = true;
+
+    const savedRole = sessionStorage.getItem("tiffin_role");
+    if (!savedRole) return;
+
+    (async () => {
+      if (savedRole === "customer") {
+        const savedPhone = sessionStorage.getItem("tiffin_phone") || "";
+        // Verify the phone still exists in Firestore (don't trust storage alone)
+        if (savedPhone) {
+          const found = cust.find((x) => x.phone === savedPhone);
+          if (found) {
+            setCustPhone(savedPhone);
+            setRole("customer");
+            setScreen("app");
+          } else {
+            // Customer deleted or phone changed — force re-login
+            sessionStorage.removeItem("tiffin_role");
+            sessionStorage.removeItem("tiffin_phone");
+          }
+        }
+      } else if (savedRole === "manager" || savedRole === "delivery") {
+        const savedPinHash = sessionStorage.getItem("tiffin_pin_hash") || "";
+        const expectedHash = savedRole === "manager" ? mgrPinHash : delivPinHash;
+        if (savedPinHash && savedPinHash === expectedHash) {
+          // Hash matches current Firestore hash — session is valid
+          setRole(savedRole);
+          setScreen("app");
+        } else {
+          // Hash mismatch — PIN was changed or storage was tampered
+          sessionStorage.removeItem("tiffin_role");
+          sessionStorage.removeItem("tiffin_pin_hash");
+        }
+      }
+    })();
+  }, [authReady, mgrPinHash, delivPinHash, cust]);
 
   // ─── Real-time Sync ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1555,30 +1648,57 @@ export default function App() {
 
   // ─── Actions ───────────────────────────────────────────────────────────────
   async function loginMgr() {
-    const hashed = await hashPIN(mgrInput);
-    if (hashed !== mgrPinHash) {
+    const lockStatus = checkLockout("tiffin_mgr_lockout");
+    if (lockStatus.locked) {
+      setMgrLockMsg(`Too many attempts. Try again in ${lockStatus.secs}s.`);
       setMgrErr(true);
       return;
     }
+    setMgrLockMsg("");
+    const hashed = await hashPIN(mgrInput);
+    if (hashed !== mgrPinHash) {
+      recordFailedAttempt("tiffin_mgr_lockout", 5, 60000);
+      const ls = checkLockout("tiffin_mgr_lockout");
+      setMgrLockMsg(ls.locked ? `Too many attempts. Locked for 60s.` : "");
+      setMgrErr(true);
+      return;
+    }
+    clearLockout("tiffin_mgr_lockout");
     setMgrErr(false);
+    setMgrLockMsg("");
     setUserPin(mgrInput);
+    // Fix 1: Store PIN hash (not plaintext) for secure session restoration
     sessionStorage.setItem("tiffin_role", "manager");
-    sessionStorage.setItem("tiffin_userpin", mgrInput);
+    sessionStorage.setItem("tiffin_pin_hash", hashed);
     setMgrInput("");
     setRole("manager");
     setScreen("app");
   }
 
   async function loginDel() {
-    const hashed = await hashPIN(pinInput);
-    if (hashed !== delivPinHash) {
+    // Fix 2: Brute-force protection (persisted in sessionStorage)
+    const lockStatus = checkLockout("tiffin_del_lockout");
+    if (lockStatus.locked) {
+      setDelLockMsg(`Too many attempts. Try again in ${lockStatus.secs}s.`);
       setPinErr(true);
       return;
     }
+    setDelLockMsg("");
+    const hashed = await hashPIN(pinInput);
+    if (hashed !== delivPinHash) {
+      recordFailedAttempt("tiffin_del_lockout", 5, 60000);
+      const ls = checkLockout("tiffin_del_lockout");
+      setDelLockMsg(ls.locked ? `Too many attempts. Locked for 60s.` : "");
+      setPinErr(true);
+      return;
+    }
+    clearLockout("tiffin_del_lockout");
     setPinErr(false);
+    setDelLockMsg("");
     setUserPin(pinInput);
+    // Fix 1: Store PIN hash (not plaintext) for secure session restoration
     sessionStorage.setItem("tiffin_role", "delivery");
-    sessionStorage.setItem("tiffin_userpin", pinInput);
+    sessionStorage.setItem("tiffin_pin_hash", hashed);
     setPinInput("");
     setRole("delivery");
     setScreen("app");
@@ -1615,7 +1735,7 @@ export default function App() {
 
   function logout() {
     sessionStorage.removeItem("tiffin_role");
-    sessionStorage.removeItem("tiffin_userpin");
+    sessionStorage.removeItem("tiffin_pin_hash");  // was: tiffin_userpin
     sessionStorage.removeItem("tiffin_phone");
     setRole(null);
     setScreen("roleSelect");
@@ -1627,6 +1747,8 @@ export default function App() {
     setMgrErr(false);
     setPinErr(false);
     setPhonErr(false);
+    setMgrLockMsg("");
+    setDelLockMsg("");
   }
 
   async function advanceStatus(id) {
@@ -1649,7 +1771,7 @@ export default function App() {
         // Write notification
         const c = cust.find((x) => String(x.id) === String(id));
         if (c && c.phone) {
-          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "items"));
+          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "messages"));
           transaction.set(notifRef, {
             message: NOTIF_MSG[next],
             type: "delivery",
@@ -1672,15 +1794,13 @@ export default function App() {
     }
   }
 
+  // Fix 3: Replace read-modify-write setDoc with atomic updateDoc
   async function setRiderNext(customerId) {
-    const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
-    const snap = await getDoc(orderDocRef);
-    if(snap.exists()) {
-      const data = snap.data();
-      if(data[String(customerId)]) {
-        data[String(customerId)].riderNextFlag = true;
-        await setDoc(orderDocRef, data);
-      }
+    try {
+      const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
+      await updateDoc(orderDocRef, { [`${String(customerId)}.riderNextFlag`]: true });
+    } catch (e) {
+      console.error("setRiderNext failed:", e);
     }
   }
 
@@ -1738,7 +1858,7 @@ export default function App() {
         // Notify customer
         const c = cust.find((x) => String(x.id) === String(cid));
         if (c && c.phone) {
-          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "items"));
+          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "messages"));
           transaction.set(notifRef, {
             message: `Payment of ₹${amt} recorded for ${monthKey}. Total paid: ₹${(existing.totalPaid || 0) + amt}.`,
             type: "payment",
@@ -1953,10 +2073,18 @@ export default function App() {
   }
 
   if (screen === "mgrAuth") {
-    return <AuthScreen icon="👔" title="Owner Access" subtitle="Enter your manager PIN" hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput} onChange={setMgrInput} error={mgrErr ? "Wrong PIN. Try again." : null} onBack={function () { setScreen("roleSelect"); setMgrErr(false); }} onSubmit={loginMgr} hint="Default PIN: 0000" isPhone={false} />;
+    const ls = checkLockout("tiffin_mgr_lockout");
+    const mgrErrMsg = mgrErr
+      ? (ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : (mgrLockMsg || "Wrong PIN. Try again."))
+      : null;
+    return <AuthScreen icon="👔" title="Owner Access" subtitle="Enter your manager PIN" hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput} onChange={setMgrInput} error={mgrErrMsg} onBack={function () { setScreen("roleSelect"); setMgrErr(false); setMgrLockMsg(""); }} onSubmit={loginMgr} hint="Contact your IT setup person for initial PIN" isPhone={false} />;
   }
   if (screen === "delivAuth") {
-    return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={pinErr ? "Wrong PIN. Try again." : null} onBack={function () { setScreen("roleSelect"); setPinErr(false); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} />;
+    const ls = checkLockout("tiffin_del_lockout");
+    const delErrMsg = pinErr
+      ? (ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : (delLockMsg || "Wrong PIN. Try again."))
+      : null;
+    return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={delErrMsg} onBack={function () { setScreen("roleSelect"); setPinErr(false); setDelLockMsg(""); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} />;
   }
   if (screen === "custAuth") {
     const isLocked = Date.now() < custLockedUntil;
