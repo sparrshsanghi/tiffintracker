@@ -1219,7 +1219,7 @@ function ManagerView(props) {
                 <div>
                   <label className="text-xs font-bold text-stone-500 uppercase">New Manager PIN</label>
                   <p className="text-xs text-stone-400 mb-1.5">Leave blank to keep current (min 4 digits)</p>
-                  <input className={INP} placeholder="Enter new manager PIN" type="password" inputMode="numeric" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={8}/>
+                  <input className={INP} placeholder="Enter new manager PIN" type="password" inputMode="text" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={12}/>
                 </div>
                 <div>
                   <label className="text-xs font-bold text-stone-500 uppercase">WhatsApp Group Invite Link</label>
