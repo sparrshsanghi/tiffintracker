@@ -774,7 +774,7 @@ function ManagerView(props) {
   var fmS=useState({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:"", paused:false, pauseFrom:"", pauseTo:""}); var form=fmS[0],setForm=fmS[1];
   var srS=useState(""); var search=srS[0],setSearch=srS[1];
   var cpS=useState(false); var copied=cpS[0],setCopied=cpS[1];
-  var ndS=useState(delivPin); var newDP=ndS[0],setNewDP=ndS[1];
+  var ndS=useState(""); var newDP=ndS[0],setNewDP=ndS[1];
   var nmS=useState(""); var newMP=nmS[0],setNewMP=nmS[1];
   var psS=useState(false); var pinSaved=psS[0],setPinSaved=psS[1];
   var dcS=useState(null); var delConfirm=dcS[0],setDelConfirm=dcS[1];
@@ -1328,8 +1328,8 @@ export default function App() {
   const [ords, setOrds] = useState([]);
   const [pays, setPays] = useState({});
   const [menu, setMenu] = useState({});
-  const [delivPin, setDelivPin] = useState("Set (Hashed)");
-  const [mgrPin, setMgrPin] = useState("Set (Hashed)");
+  const [delivPin, setDelivPin] = useState("");
+  const [mgrPin, setMgrPin] = useState("");
   const [notifs, setNotifs] = useState({});
   const [custPhone, setCustPhone] = useState("");
   const [whatsappGroup, setWhatsappGroup] = useState("");
@@ -1337,6 +1337,7 @@ export default function App() {
 
   const [mgrPinHash, setMgrPinHash] = useState("");
   const [delivPinHash, setDelivPinHash] = useState("");
+  // NOTE: userPin is intentionally never stored; all auth uses hashes only
   const [userPin, setUserPin] = useState("");
 
   const [mgrInput, setMgrInput] = useState("");
@@ -1999,7 +2000,7 @@ export default function App() {
       if (newHash === mgrPinHash) { alert("New PIN must be different."); return; }
       const settingsRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
       await updateDoc(settingsRef, { mgrPinHash: newHash });
-      setUserPin(newPin);
+      // Intentionally NOT storing plaintext PIN; hash stored in Firestore only
     } catch (e) {
       console.error(e);
       alert("Error changing manager PIN: " + e.message);
