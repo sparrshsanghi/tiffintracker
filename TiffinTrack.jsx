@@ -115,25 +115,13 @@ var PST = {
   unpaid:  { label:"Unpaid",  cls:"bg-red-100 text-red-700"     },
 };
 
-// ─── Seed data ────────────────────────────────────────────────────────────────
-var SEED_C = [
-  { id:1, name:"Priya Sharma",  phone:"9876543210", address:"Sector 5, Near Park",   plan:"monthly", food:"Veg Thali + Roti",      rate:2500, active:true },
-  { id:2, name:"Rahul Verma",   phone:"9812345678", address:"MG Road, Flat 3B",      plan:"daily",   food:"Dal Chawal + Sabzi",    rate:3000, active:true },
-  { id:3, name:"Anita Mehta",   phone:"9998887776", address:"Civil Lines, House 12", plan:"monthly", food:"2 Roti + Paneer Curry", rate:2200, active:true },
-];
+// ─── Seed data (DEV only) ─────────────────────────────────────────────────────
+var SEED_C = import.meta.env.DEV ? [
+  { id:"dev1", name:"Priya Sharma",  phone:"9876543210", address:"Sector 5, Near Park",   plan:"monthly", food:"Veg Thali + Roti",      rate:2500, active:true },
+  { id:"dev2", name:"Rahul Verma",   phone:"9812345678", address:"MG Road, Flat 3B",      plan:"daily",   food:"Dal Chawal + Sabzi",    rate:3000, active:true },
+] : [];
 var SEED_P = {};
-SEED_P["1-"+CUR_MON] = [{id:1, amount:2500, date:"01 Jun", confirmed:true }];
-SEED_P["2-"+CUR_MON] = [{id:2, amount:1500, date:"03 Jun", confirmed:false}];
 var SEED_MENU = {};
-SEED_MENU[THIS_WEEK] = [
-  {items:["Dal Tadka","Rice","Roti x4","Aloo Gobi"],  note:""},
-  {items:["Rajma","Rice","Roti x4","Salad"],           note:""},
-  {items:["Chole","Puri","Rice"],                      note:"Puri day!"},
-  {items:["Palak Paneer","Rice","Roti x4"],            note:""},
-  {items:["Kadhi Pakora","Rice","Roti x4"],            note:""},
-  {items:["Chana Dal","Jeera Rice","Paratha x2"],      note:""},
-  {items:["Mix Veg","Dal","Rice","Roti x4","Kheer"],   note:"Sunday special"},
-];
 
 var INP = "w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-stone-50";
 
@@ -859,17 +847,24 @@ function ManagerView(props) {
   }
 
   function confirmPartial(cid) {
+    var c = customers.find(function(x){return x.id===cid;});
     var amt=payAmt[cid]; if(!amt||isNaN(+amt)||+amt<=0) return;
+    var remaining = c ? Math.max(0, c.rate - getPaid(cid, payMonth)) : 0;
+    if(remaining > 0 && +amt > remaining) {
+      alert("Amount " + fmt(+amt) + " exceeds balance of " + fmt(remaining));
+      return;
+    }
     addPayment(cid,+amt,true);
     setShowPart(function(p){ var n=Object.assign({},p); n[cid]=false; return n; });
     setPayAmt(function(p){ var n=Object.assign({},p); n[cid]=""; return n; });
   }
 
   function savePins() {
-    if(newDP.length>=3) setDelivPin(newDP);
-    if(newMP.length>=4) setMgrPin(newMP);
-    if(wg !== props.whatsappGroup) props.saveWhatsappGroup(wg);
-    setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000);
+    var saved = false;
+    if(newDP.length>=3) { props.setDelivPin(newDP); saved = true; }
+    if(newMP.length>=4) { props.setMgrPin(newMP); saved = true; }
+    if(wg !== props.whatsappGroup) { props.saveWhatsappGroup(wg); saved = true; }
+    if(saved) { setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000); }
   }
 
   var todayMenuData = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
@@ -980,7 +975,7 @@ function ManagerView(props) {
                   {label:"Update delivery statuses",icon:"🚴",cls:"bg-orange-50 text-orange-700",fn:function(){setTab("orders");}},
                   {label:"Plan this week's menu",   icon:"📋",cls:"bg-amber-50 text-amber-700",  fn:function(){setTab("menu");}},
                   {label:"Add new customer",        icon:"➕",cls:"bg-green-50 text-green-700",  fn:openAdd},
-                  {label:"Reset for new day",       icon:"🔄",cls:"bg-blue-50 text-blue-700",    fn:resetDay},
+                  {label:"Reset for new day",       icon:"🔄",cls:"bg-blue-50 text-blue-700",    fn:props.onResetDay},
                 ].map(function(a){
                   return (
                     <button key={a.label} onClick={a.fn} className={"w-full flex items-center gap-3 px-4 py-3 "+a.cls+" rounded-xl text-sm font-semibold"}>
@@ -1006,7 +1001,7 @@ function ManagerView(props) {
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <p className="text-sm font-bold text-stone-600">{orders.length} deliveries today</p>
-              <button onClick={resetDay} className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full">Reset Day</button>
+              <button onClick={props.onResetDay} className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full">Reset Day</button>
             </div>
             {orders.length===0 && <div className="text-center py-16 text-stone-400"><div className="text-5xl mb-3">🍽️</div><p className="font-semibold">No deliveries today</p></div>}
             {orders.map(function(order){
@@ -1090,7 +1085,7 @@ function ManagerView(props) {
                               <div className="flex flex-col gap-1.5 flex-shrink-0">
                                 <button onClick={function(){openEdit(c);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-100">Edit</button>
                                 <button onClick={function(){togglePause(c);}} className={"text-xs font-bold px-2.5 py-1.5 rounded-lg border " + (c.active?"text-amber-600 bg-amber-50 border-amber-100":"text-green-600 bg-green-50 border-green-100")}>{c.active?"Pause":"Resume"}</button>
-                                <button onClick={function(){confirmDel(c.id);}} className={"text-xs font-bold px-2.5 py-1.5 rounded-lg border " + (delConfirm===c.id?"bg-red-600 text-white border-red-600":"text-red-500 bg-red-50 border-red-100")}>{delConfirm===c.id?"Sure?":"Delete"}</button>
+                                <button onClick={function(){setDelConfirm(c.id);}} className="text-xs font-bold px-2.5 py-1.5 rounded-lg border text-red-500 bg-red-50 border-red-100">Delete</button>
                               </div>
                             </div>
                             <div className="flex gap-2 mt-4 pt-3 border-t border-stone-50">
@@ -1208,17 +1203,14 @@ function ManagerView(props) {
               <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-4">Access PINs</p>
               <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold text-stone-500 uppercase">Delivery PIN</label>
-                  <p className="text-xs text-stone-400 mb-1.5">Share with your delivery person</p>
-                  <div className="flex gap-2">
-                    <input className={"flex-1 "+INP} placeholder="New delivery PIN" inputMode="numeric" value={newDP} onChange={function(e){setNewDP(e.target.value);}} maxLength={6}/>
-                    <div className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-2.5 rounded-xl whitespace-nowrap">Now: {delivPin}</div>
-                  </div>
+                  <label className="text-xs font-bold text-stone-500 uppercase">New Delivery PIN</label>
+                  <p className="text-xs text-stone-400 mb-1.5">Share with your delivery person (min 3 digits)</p>
+                  <input className={INP} placeholder="Enter new delivery PIN" inputMode="numeric" value={newDP} onChange={function(e){setNewDP(e.target.value);}} maxLength={6}/>
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-stone-500 uppercase">Change Manager PIN</label>
-                  <p className="text-xs text-stone-400 mb-1.5">Leave blank to keep current</p>
-                  <input className={INP} placeholder="New 4+ digit PIN" type="password" inputMode="numeric" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={8}/>
+                  <label className="text-xs font-bold text-stone-500 uppercase">New Manager PIN</label>
+                  <p className="text-xs text-stone-400 mb-1.5">Leave blank to keep current (min 4 digits)</p>
+                  <input className={INP} placeholder="Enter new manager PIN" type="password" inputMode="numeric" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={8}/>
                 </div>
                 <div>
                   <label className="text-xs font-bold text-stone-500 uppercase">WhatsApp Group Invite Link</label>
@@ -1232,6 +1224,24 @@ function ManagerView(props) {
           </div>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {delConfirm && (() => {
+        var dc = customers.find(function(x){return x.id===delConfirm;});
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+              <div className="text-4xl text-center mb-3">🗑️</div>
+              <h3 className="text-lg font-black text-stone-800 text-center">Delete {dc ? dc.name : "Customer"}?</h3>
+              <p className="text-sm text-stone-500 text-center mt-2 mb-6">All their payment history will also be removed. This cannot be undone.</p>
+              <div className="flex gap-3">
+                <button onClick={function(){setDelConfirm(null);}} className="flex-1 py-3 border-2 border-stone-200 rounded-2xl text-stone-600 font-bold">Cancel</button>
+                <button onClick={function(){confirmDel(delConfirm);setDelConfirm(null);}} className="flex-1 py-3 bg-red-600 text-white rounded-2xl font-black">Delete</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showForm && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={function(e){if(e.target===e.currentTarget)setShowForm(false);}}>
@@ -1308,6 +1318,9 @@ export default function App() {
   const [pinErr, setPinErr] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phonErr, setPhonErr] = useState(false);
+  const [custAttempts, setCustAttempts] = useState(0);
+  const [custLockedUntil, setCustLockedUntil] = useState(0);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   useEffect(() => {
     const savedRole = sessionStorage.getItem("tiffin_role");
@@ -1572,13 +1585,27 @@ export default function App() {
   }
 
   function loginCust() {
+    const now = Date.now();
+    if (now < custLockedUntil) {
+      const secs = Math.ceil((custLockedUntil - now) / 1000);
+      setPhonErr(true);
+      return;
+    }
     const ph = phoneInput.trim();
     const c = cust.find((x) => x.phone === ph);
     if (!c) {
+      const next = custAttempts + 1;
+      setCustAttempts(next);
+      if (next >= 3) {
+        setCustLockedUntil(Date.now() + 30000);
+        setCustAttempts(0);
+      }
       setPhonErr(true);
       return;
     }
     setPhonErr(false);
+    setCustAttempts(0);
+    setCustLockedUntil(0);
     setCustPhone(ph);
     sessionStorage.setItem("tiffin_role", "customer");
     sessionStorage.setItem("tiffin_phone", ph);
@@ -1894,23 +1921,25 @@ export default function App() {
   const weekMenu = menu[THIS_WEEK] || null;
 
   if (screen === "roleSelect") {
+    const urlParams = new URLSearchParams(window.location.search);
+    const roleParam = urlParams.get("role");
     return (
       <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col items-center justify-center p-6" style={{ fontFamily: "system-ui,sans-serif" }}>
         <div className="w-full max-w-sm">
           <div className="text-center mb-10">
             <div className="text-7xl mb-4">🍱</div>
-            <h1 className="text-3xl font-black text-stone-800">TiffinTrack</h1>
-            <p className="text-stone-400 mt-1 text-sm">Home food delivery manager</p>
+            <h1 className="text-3xl font-black text-stone-800">Maa Sharda Tiffin</h1>
+            <p className="text-stone-500 mt-1 text-sm">Fresh home-cooked meals, delivered daily</p>
+            <p className="text-stone-400 mt-3 text-xs font-semibold uppercase tracking-wider">Select your role to continue</p>
           </div>
-          <p className="text-xs font-bold text-stone-400 uppercase tracking-wider text-center mb-4">Choose your role</p>
           <div className="space-y-3">
             {[
-              { icon: "👔", title: "Business Owner", sub: "Full access", bdr: "border-orange-200 hover:border-orange-400", fn: function () { setScreen("mgrAuth"); } },
-              { icon: "🚴", title: "Delivery Person", sub: "Today's deliveries", bdr: "border-blue-200 hover:border-blue-400", fn: function () { setScreen("delivAuth"); } },
-              { icon: "👤", title: "I'm a Customer", sub: "My order & payment", bdr: "border-green-200 hover:border-green-400", fn: function () { setScreen("custAuth"); } }
+              { icon: "👔", title: "Business Owner", sub: "Full access", bdr: "border-orange-200 hover:border-orange-400", fn: function () { setScreen("mgrAuth"); }, highlight: roleParam === "manager" },
+              { icon: "🚴", title: "Delivery Person", sub: "Today's deliveries", bdr: "border-blue-200 hover:border-blue-400", fn: function () { setScreen("delivAuth"); }, highlight: roleParam === "delivery" },
+              { icon: "👤", title: "I'm a Customer", sub: "My order & payment", bdr: "border-green-200 hover:border-green-400", fn: function () { setScreen("custAuth"); }, highlight: roleParam === "customer" }
             ].map(function (r) {
               return (
-                <button key={r.title} onClick={r.fn} className={"w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 " + r.bdr + " hover:shadow-md transition-all text-left"}>
+                <button key={r.title} onClick={r.fn} className={"w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 " + r.bdr + (r.highlight ? " ring-2 ring-offset-2 ring-orange-400" : "") + " hover:shadow-md transition-all text-left"}>
                   <div className="w-14 h-14 bg-stone-50 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0">{r.icon}</div>
                   <div><p className="font-black text-stone-800 text-base">{r.title}</p><p className="text-xs text-stone-400 mt-0.5">{r.sub}</p></div>
                   <span className="ml-auto text-stone-300 text-xl">›</span>
@@ -1930,23 +1959,57 @@ export default function App() {
     return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={pinErr ? "Wrong PIN. Try again." : null} onBack={function () { setScreen("roleSelect"); setPinErr(false); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} />;
   }
   if (screen === "custAuth") {
-    return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600" btn="bg-green-600 hover:bg-green-700" value={phoneInput} onChange={setPhoneInput} error={phonErr ? "Number not found. Contact the business owner." : null} onBack={function () { setScreen("roleSelect"); setPhonErr(false); }} onSubmit={loginCust} hint="Use the number given to the business" isPhone={true} />;
+    const isLocked = Date.now() < custLockedUntil;
+    const lockSecs = isLocked ? Math.ceil((custLockedUntil - Date.now()) / 1000) : 0;
+    const custErrMsg = phonErr
+      ? (isLocked ? `Too many attempts. Wait ${lockSecs}s before trying again.` : "Number not registered. Contact your tiffin owner.")
+      : null;
+    return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600" btn="bg-green-600 hover:bg-green-700" value={phoneInput} onChange={setPhoneInput} error={custErrMsg} onBack={function () { setScreen("roleSelect"); setPhonErr(false); setCustAttempts(0); }} onSubmit={loginCust} hint="Use the phone number you gave the business owner" isPhone={true} />;
   }
+
+  // Reset Day confirmation modal (rendered at App level so it works across roles)
+  const resetConfirmModal = showResetConfirm ? (
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+        <div className="text-4xl text-center mb-3">🔄</div>
+        <h3 className="text-lg font-black text-stone-800 text-center">Reset Delivery Day?</h3>
+        <p className="text-sm text-stone-500 text-center mt-2 mb-6">All delivery statuses will reset to Pending. This cannot be undone.</p>
+        <div className="flex gap-3">
+          <button onClick={() => setShowResetConfirm(false)} className="flex-1 py-3 border-2 border-stone-200 rounded-2xl text-stone-600 font-bold">Cancel</button>
+          <button onClick={() => { setShowResetConfirm(false); resetDay(); }} className="flex-1 py-3 bg-orange-600 text-white rounded-2xl font-black">Reset</button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const onResetDay = () => setShowResetConfirm(true);
 
   if (role === "manager") {
     if (legacyMode) {
       return (
         <div>
+          {resetConfirmModal}
           <button onClick={() => setLegacyMode(false)} className="w-full bg-amber-500 text-white font-bold py-2 shadow-md">← Back to Modern Dashboard</button>
-          <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} resetDay={resetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} delivPin={delivPin} setDelivPin={updateDelivPin} mgrPin={mgrPin} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} logout={logout} />
+          <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} delivPin={delivPin} setDelivPin={updateDelivPin} mgrPin={mgrPin} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} logout={logout} />
         </div>
       );
     }
-    return <NewManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} stats={stats} payStats={payStats} logout={logout} openLegacy={() => setLegacyMode(true)} resetDay={resetDay} />;
+    return (
+      <div>
+        {resetConfirmModal}
+        <NewManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} stats={stats} payStats={payStats} logout={logout} openLegacy={() => setLegacyMode(true)} resetDay={onResetDay} />
+      </div>
+    );
   }
 
   if (role === "delivery") {
-    return <DeliveryView orders={displayOrders} customers={cust} advance={advanceStatus} advanceGroup={advanceGroupStatus} setRiderNext={setRiderNext} resetDay={resetDay} logout={logout} stats={stats} />;
+    // Delivery person cannot reset — only manager can
+    return (
+      <div>
+        {resetConfirmModal}
+        <DeliveryView orders={displayOrders} customers={cust} advance={advanceStatus} advanceGroup={advanceGroupStatus} setRiderNext={setRiderNext} logout={logout} stats={stats} />
+      </div>
+    );
   }
 
   if (role === "customer") {
@@ -1973,35 +2036,5 @@ export default function App() {
     );
   }
 
-  return (
-    <ManagerView
-      customers={cust}
-      setCustomers={updateCustomersInFirestore}
-      orders={displayOrders}
-      setOrders={async () => {}}
-      payments={pays}
-      menu={menu}
-      setMenuWeek={setMenuWeek}
-      stats={stats}
-      payStats={payStats}
-      getPaid={getPaid}
-      getPayStat={getPayStat}
-      addPayment={addPayment}
-      removePayment={removePayment}
-      resetDay={resetDay}
-      advanceStatus={advanceStatus}
-      curMonth={CUR_MON}
-      delivPin={delivPin}
-      setDelivPin={updateDelivPin}
-      mgrPin={mgrPin}
-      setMgrPin={updateMgrPin}
-      whatsappGroup={whatsappGroup}
-      saveWhatsappGroup={async function(link) {
-        const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
-        await setDoc(docRef, { whatsappGroup: link }, { merge: true });
-        setWhatsappGroup(link);
-      }}
-      logout={logout}
-    />
-  );
+  return null;
 }
