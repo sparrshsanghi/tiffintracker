@@ -15,7 +15,10 @@ import {
   updateDoc,
   deleteDoc,
   deleteField,
-  runTransaction
+  runTransaction,
+  writeBatch,
+  getDocs,
+  getDoc
 } from "firebase/firestore";
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from "firebase/functions";
 import { DeliveryView, CustomerView, ManagerView as NewManagerView } from "./src/Views.jsx";
@@ -1413,6 +1416,97 @@ export default function App() {
       unsubscribeSettings();
     };
   }, []);
+
+  // ─── Automated System Maintenance (Fallback for Cloud Functions) ───────────
+  useEffect(() => {
+    if (role !== "manager") return;
+
+    const runMaintenance = async () => {
+      const now = new Date();
+      const todayString = now.toLocaleDateString("en-CA"); // YYYY-MM-DD
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const currentMonthKey = `${year}-${month}`;
+
+      const settingsRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
+      
+      try {
+        const needsMaintenance = await runTransaction(db, async (transaction) => {
+          const sfDoc = await transaction.get(settingsRef);
+          if (!sfDoc.exists()) return null;
+          
+          const data = sfDoc.data();
+          const tasks = [];
+          
+          if (data.lastResetDate !== todayString) tasks.push("dailyReset");
+          if (data.lastPauseCheck !== todayString) tasks.push("pauseCheck");
+          if (data.lastMonthlyInit !== currentMonthKey) tasks.push("monthlyInit");
+
+          if (tasks.length > 0) {
+            transaction.update(settingsRef, { 
+              lastResetDate: todayString,
+              lastPauseCheck: todayString,
+              lastMonthlyInit: currentMonthKey
+            });
+            return tasks;
+          }
+          return null;
+        });
+
+        if (needsMaintenance) {
+          console.log("Running system maintenance for:", todayString, needsMaintenance);
+          const custSnap = await getDocs(collection(db, "businesses", BUSINESS_ID, "customers"));
+          const batch = writeBatch(db);
+          let changes = 0;
+
+          if (needsMaintenance.includes("dailyReset")) {
+            const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", todayString);
+            const orderData = {};
+            custSnap.forEach((docSnap) => {
+              const data = docSnap.data();
+              if (data.active !== false) {
+                orderData[docSnap.id] = { status: "pending", updatedAt: new Date(), updatedBy: "system_frontend_fallback" };
+              }
+            });
+            if (Object.keys(orderData).length > 0) {
+              batch.set(orderDocRef, orderData);
+              changes++;
+            }
+          }
+
+          if (needsMaintenance.includes("pauseCheck")) {
+            custSnap.forEach((docSnap) => {
+              const data = docSnap.data();
+              if (data.active === false && data.resumeDate && data.resumeDate <= todayString) {
+                batch.update(docSnap.ref, { active: true, resumeDate: deleteField() });
+                changes++;
+              }
+            });
+          }
+
+          if (needsMaintenance.includes("monthlyInit")) {
+            custSnap.forEach((docSnap) => {
+              const data = docSnap.data();
+              if (data.active !== false && data.rate && data.rate > 0) {
+                const paymentRef = doc(db, "businesses", BUSINESS_ID, "payments", `${docSnap.id}_${currentMonthKey}`);
+                batch.set(paymentRef, { totalPaid: 0, records: [] }, { merge: true });
+                changes++;
+              }
+            });
+          }
+
+          if (changes > 0) {
+            await batch.commit();
+            console.log("System maintenance complete.");
+          }
+        }
+      } catch (e) {
+        console.error("System maintenance failed: ", e);
+      }
+    };
+
+    runMaintenance();
+  }, [role]);
 
   // 6. Sync Notifications for the logged-in customer phone
   useEffect(() => {
