@@ -1,237 +1,308 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
-  MapPin, Package, CheckCircle2, ChevronDown, ChevronUp,
-  Phone, Bell, CreditCard, Home, Building2, UtensilsCrossed,
-  Users, AlertCircle, Bike, BriefcaseBusiness
+  LayoutDashboard, Users, Wallet, UtensilsCrossed, LogOut, ChevronDown, ChevronUp,
+  Phone, Package, CheckCircle2, Home, Bell, Truck, TrendingUp, IndianRupee, MapPin,
+  Plus, MessageCircle, Bike, Soup, AlertCircle, Navigation, PackageCheck,
 } from "lucide-react";
 
-// ─── Data ──────────────────────────────────────────────────────────────
-const INIT_COLS = [
+/* ------------------------------- Mock data -------------------------------- */
+type Status = "pending" | "packed" | "delivered";
+
+interface Customer {
+  id: string; house: string; name: string; food: string;
+  status: Status; phone: string; qty: number; dueAmount?: number;
+}
+interface Colony { id: string; name: string; lat: number; lng: number; customers: Customer[]; }
+
+const initialColonies: Colony[] = [
   {
-    id: "c1", name: "Shankar Nagar", area: "Civil Lines", landmark: "near Gate 2",
-    members: [
-      { id: "m1", houseNo: "H-12", name: "Rahul Sharma",  food: "Dal Tadka · Jeera Rice · Roti ×4", status: "packed" },
-      { id: "m2", houseNo: "H-15", name: "Priya Verma",   food: "Rajma · Rice · Paratha ×3",        status: "pending" },
-      { id: "m3", houseNo: "H-23", name: "Mohan Gupta",   food: "Kadhi Chawal · Roti ×4",           status: "delivered" },
-      { id: "m4", houseNo: "H-45", name: "Deepa Singh",   food: "Dal Makhani · Rice · Naan ×2",     status: "pending" },
+    id: "shankar", name: "Shankar Nagar", lat: 21.1458, lng: 79.0882,
+    customers: [
+      { id: "s1", house: "H-12", name: "Rahul Sharma", food: "Roti, Rice, Daal", status: "delivered", phone: "+919876543210", qty: 2, dueAmount: 500 },
+      { id: "s2", house: "H-14", name: "Priya Patel", food: "Roti, Rice, Daal", status: "delivered", phone: "+919876543211", qty: 1 },
+      { id: "s3", house: "H-22", name: "Amit Kumar", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543212", qty: 3 },
+      { id: "s4", house: "H-31", name: "Sneha Reddy", food: "Roti, Rice, Daal (Jain)", status: "pending", phone: "+919876543213", qty: 1 },
+      { id: "s5", house: "H-45", name: "Vikram Singh", food: "Roti, Rice, Daal", status: "pending", phone: "+919876543214", qty: 2 },
     ],
   },
   {
-    id: "c2", name: "MIG Colony", area: "Pandri", landmark: "near Main Chowk",
-    members: [
-      { id: "m5", houseNo: "B-7",  name: "Suresh Yadav",  food: "Chole · Puri · Salad",             status: "pending" },
-      { id: "m6", houseNo: "B-11", name: "Kavita Mishra", food: "Paneer Bhurji · Rice · Roti ×3",   status: "pending" },
+    id: "gokul", name: "Gokul Park", lat: 21.1500, lng: 79.0950,
+    customers: [
+      { id: "g1", house: "B-3", name: "Anjali Mehta", food: "Roti, Rice, Daal", status: "delivered", phone: "+919876543215", qty: 2 },
+      { id: "g2", house: "B-7", name: "Rohan Iyer", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543216", qty: 1 },
+      { id: "g3", house: "B-12", name: "Kavya Nair", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543217", qty: 4 },
+    ],
+  },
+  {
+    id: "model", name: "Model Town", lat: 21.1370, lng: 79.0750,
+    customers: [
+      { id: "m1", house: "A-5", name: "Deepak Joshi", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543218", qty: 2 },
+      { id: "m2", house: "A-9", name: "Meera Kapoor", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543219", qty: 1 },
+      { id: "m3", house: "A-18", name: "Suresh Yadav", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543220", qty: 1 },
+      { id: "m4", house: "A-21", name: "Pooja Verma", food: "Roti, Rice, Daal", status: "packed", phone: "+919876543221", qty: 3 },
     ],
   },
 ];
 
-const INIT_INDIVS = [
-  { id: "i1", name: "Anjali Tiwari",  address: "42 Gandhi Nagar, Sector 7", food: "Dal Tadka · Rice · Roti ×4",  status: "packed" },
-  { id: "i2", name: "Vikram Sahu",    address: "7 Telibandha, Ring Road",   food: "Rajma · Roti ×3",             status: "pending" },
-  { id: "i3", name: "Sunita Agarwal", address: "15 Nehru Nagar, Block C",   food: "Dal Makhani · Paratha ×2",    status: "delivered" },
+const weekMenu = [
+  { day: "Monday", lunch: "Roti, Rice, Daal, Aloo Gobi" },
+  { day: "Tuesday", lunch: "Roti, Rice, Daal, Bhindi Masala" },
+  { day: "Wednesday", lunch: "Roti, Rice, Daal, Rajma" },
+  { day: "Thursday", lunch: "Roti, Rice, Daal, Mix Veg" },
+  { day: "Friday", lunch: "Roti, Rice, Daal, Chole" },
+  { day: "Saturday", lunch: "Roti, Rice, Daal, Paneer Curry" },
+  { day: "Sunday", lunch: "Special — Pav Bhaji" },
 ];
 
-const WEEK = [
-  { day: "Mon", date: "23", items: "Dal Tadka · Jeera Rice · Roti ×4",      past: true },
-  { day: "Tue", date: "24", items: "Rajma · Rice · Paratha ×3",             past: true },
-  { day: "Wed", date: "25", items: "Chole · Puri · Salad",                  past: true },
-  { day: "Thu", date: "26", items: "Kadhi · Rice · Roti ×4",               past: true },
-  { day: "Fri", date: "27", items: "Paneer Bhurji · Rice · Roti ×3",       past: true },
-  { day: "Sat", date: "28", items: "Dal Makhani · Rice · Naan ×2",         past: true },
-  { day: "Sun", date: "29", items: "Dal Makhani · Jeera Rice · Roti ×4 · Raita", today: true },
-];
+/* ------------------------------- Shell ----------------------------------- */
+type Role = "manager" | "delivery" | "customer";
 
-// ─── Atoms ─────────────────────────────────────────────────────────────
-const STATUS = {
-  pending:   { label: "Pending",   bg: "bg-red-100",   text: "text-red-700",   dot: "bg-red-400" },
-  packed:    { label: "On way",    bg: "bg-amber-100", text: "text-amber-800", dot: "bg-amber-500" },
-  delivered: { label: "Delivered", bg: "bg-green-100", text: "text-green-800", dot: "bg-green-500" },
-};
+export default function TiffinTrackApp() {
+  const [role, setRole] = useState<Role>("manager");
+  const [colonies, setColonies] = useState<Colony[]>(initialColonies);
 
-function Pill({ status }) {
-  const s = STATUS[status];
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${s.bg} ${s.text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
-      {s.label}
-    </span>
-  );
-}
-
-function MarkBtn({ status, onPacked, onDelivered }) {
-  if (status === "delivered") return null;
-  return status === "pending" ? (
-    <button onClick={onPacked}
-      className="flex items-center gap-1 text-xs font-bold bg-amber-500 text-white px-3 py-1.5 rounded-lg">
-      <Package size={11} /> Packed
-    </button>
-  ) : (
-    <button onClick={onDelivered}
-      className="flex items-center gap-1 text-xs font-bold bg-green-500 text-white px-3 py-1.5 rounded-lg">
-      <CheckCircle2 size={11} /> Delivered
-    </button>
-  );
-}
-
-function HouseTag({ no, done }) {
-  return (
-    <div className={`flex-shrink-0 rounded-md text-center px-2.5 py-1.5 min-w-[52px] ${done ? "bg-stone-100" : "bg-amber-900"}`}>
-      <span className={`text-xs font-black font-mono tracking-wide ${done ? "text-stone-400" : "text-amber-100"}`}>
-        {no}
-      </span>
+    <div className="min-h-screen bg-stone-50 text-stone-800" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+      <RoleSwitcher role={role} setRole={setRole} />
+      <div className="mx-auto max-w-md pb-28">
+        {role === "manager" && <ManagerView colonies={colonies} setColonies={setColonies} />}
+        {role === "delivery" && <DeliveryView colonies={colonies} setColonies={setColonies} />}
+        {role === "customer" && <CustomerView colonies={colonies} />}
+      </div>
     </div>
   );
 }
 
-function SectionLabel({ children }) {
+/* ------------------------- Role switcher (demo) -------------------------- */
+function RoleSwitcher({ role, setRole }: { role: Role; setRole: (r: Role) => void }) {
+  const roles: { key: Role; label: string; icon: typeof Home }[] = [
+    { key: "manager", label: "Manager", icon: LayoutDashboard },
+    { key: "delivery", label: "Rider", icon: Bike },
+    { key: "customer", label: "Customer", icon: Home },
+  ];
   return (
-    <p className="text-xs font-bold text-stone-400 uppercase tracking-widest px-1">{children}</p>
+    <div className="sticky top-0 z-40 border-b border-stone-200/70 bg-white/70 backdrop-blur-md">
+      <div className="mx-auto flex max-w-md items-center justify-between px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 place-items-center rounded-xl bg-amber-500 text-white shadow-sm"><Soup size={18} /></div>
+          <span className="text-sm font-bold tracking-tight">TiffinTrack</span>
+        </div>
+        <div className="flex items-center gap-1 rounded-full bg-stone-100 p-1">
+          {roles.map((r) => {
+            const Icon = r.icon;
+            const active = role === r.key;
+            return (
+              <button key={r.key} onClick={() => setRole(r.key)}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${active ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"}`}>
+                <Icon size={13} />{r.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
-// ─── Delivery View ──────────────────────────────────────────────────────
-function DeliveryView({ cols, indivs, setCols, setIndivs }) {
-  const [exp, setExp] = useState({ c1: true, c2: false });
+/* ============================ MANAGER VIEW ============================== */
+function ManagerView({ colonies, setColonies }: { colonies: Colony[]; setColonies: (c: Colony[]) => void; }) {
+  const [tab, setTab] = useState<"overview" | "packing" | "customers" | "payments" | "menu">("overview");
 
-  const setMember = (cid, mid, s) =>
-    setCols(cs => cs.map(c => c.id !== cid ? c : {
-      ...c, members: c.members.map(m => m.id !== mid ? m : { ...m, status: s }),
-    }));
-
-  const setIndiv = (id, s) =>
-    setIndivs(is => is.map(i => i.id !== id ? i : { ...i, status: s }));
-
-  const all = [...cols.flatMap(c => c.members), ...indivs];
-  const done = all.filter(x => x.status === "delivered").length;
-  const total = all.length;
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  const totals = useMemo(() => {
+    const all = colonies.flatMap((c) => c.customers);
+    const tiffins = all.reduce((s, c) => s + c.qty, 0);
+    const packedTiffins = all.filter((c) => c.status === "packed" || c.status === "delivered").reduce((s, c) => s + c.qty, 0);
+    const deliveredTiffins = all.filter((c) => c.status === "delivered").reduce((s, c) => s + c.qty, 0);
+    return {
+      total: all.length,
+      delivered: all.filter((c) => c.status === "delivered").length,
+      pending: all.filter((c) => c.status !== "delivered").length,
+      tiffins, packedTiffins, deliveredTiffins,
+    };
+  }, [colonies]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Stats header */}
-      <div className="bg-white border-b border-stone-100 px-4 pt-4 pb-3 flex-shrink-0">
-        <div className="flex justify-between items-start">
-          <div>
-            <p className="text-xs text-stone-400 font-semibold uppercase tracking-wide">Today · Sun 29 Jun</p>
-            <p className="text-xs text-stone-400 mt-0.5">{cols.length} colonies · {indivs.length} individual</p>
-          </div>
-          <div className="text-right">
-            <p className="text-2xl font-black text-stone-900 leading-none">
-              {done}<span className="text-stone-300 font-normal text-base">/{total}</span>
-            </p>
-            <p className="text-xs text-stone-400">delivered</p>
-          </div>
+    <>
+      {tab === "overview" && <ManagerOverview colonies={colonies} totals={totals} />}
+      {tab === "packing" && <ManagerPacking colonies={colonies} setColonies={setColonies} totals={totals} />}
+      {tab === "customers" && <ManagerCustomers colonies={colonies} />}
+      {tab === "payments" && <ManagerPayments colonies={colonies} />}
+      {tab === "menu" && <ManagerMenu />}
+      <BottomNav
+        items={[
+          { key: "overview", label: "Overview", icon: LayoutDashboard },
+          { key: "packing", label: "Packing", icon: Package },
+          { key: "customers", label: "Customers", icon: Users },
+          { key: "payments", label: "Payments", icon: Wallet },
+          { key: "menu", label: "Menu", icon: UtensilsCrossed },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as typeof tab)}
+      />
+    </>
+  );
+}
+
+function ManagerOverview({ colonies, totals }: {
+  colonies: Colony[];
+  totals: { total: number; delivered: number; pending: number; tiffins: number; packedTiffins: number; deliveredTiffins: number; };
+}) {
+  return (
+    <div className="px-4 pt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium text-stone-500">Good afternoon</p>
+          <h1 className="text-2xl font-bold tracking-tight">Hey, Owner 👋</h1>
         </div>
-        <div className="mt-2.5 h-2 bg-stone-100 rounded-full overflow-hidden">
-          <div className="h-full bg-amber-500 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
-        </div>
+        <button className="flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-600 shadow-sm">
+          <LogOut size={13} /> Logout
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pt-3 pb-6 space-y-2.5">
-        <SectionLabel>Colonies</SectionLabel>
+      <div className="mt-5 grid grid-cols-3 gap-3">
+        <KpiCard label="Tiffins" value={totals.tiffins} icon={Soup} tone="stone" />
+        <KpiCard label="Packed" value={totals.packedTiffins} icon={Package} tone="amber" />
+        <KpiCard label="Delivered" value={totals.deliveredTiffins} icon={CheckCircle2} tone="green" />
+      </div>
 
-        {cols.map(col => {
-          const colDone = col.members.filter(m => m.status === "delivered").length;
-          const allDone = colDone === col.members.length;
-          const open = exp[col.id];
+      <p className="mt-3 text-[11px] font-medium text-stone-400">
+        {totals.total} customers · {totals.tiffins} tiffins today
+      </p>
 
-          return (
-            <div key={col.id}
-              className={`rounded-2xl overflow-hidden border-2 ${allDone ? "border-green-200" : "border-amber-200"}`}>
-              {/* Colony header */}
-              <button
-                onClick={() => setExp(e => ({ ...e, [col.id]: !open }))}
-                className={`w-full flex items-center gap-2.5 px-3.5 py-3 text-left ${allDone ? "bg-green-50" : "bg-amber-50"}`}>
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${allDone ? "bg-green-100" : "bg-amber-100"}`}>
-                  <Building2 size={18} className={allDone ? "text-green-600" : "text-amber-700"} />
+      <Card className="mt-5">
+        <CardHeader icon={<MapPin size={16} className="text-amber-600" />} title="Colony Progress" subtitle="Today's dispatch" />
+        <div className="mt-4 space-y-4">
+          {colonies.map((c) => {
+            const tiff = c.customers.reduce((s, x) => s + x.qty, 0);
+            const done = c.customers.filter((x) => x.status === "delivered").reduce((s, x) => s + x.qty, 0);
+            const pct = tiff ? Math.round((done / tiff) * 100) : 0;
+            return (
+              <div key={c.id}>
+                <div className="mb-1.5 flex items-center justify-between text-sm">
+                  <span className="font-semibold text-stone-800">{c.name}</span>
+                  <span className="text-xs font-medium text-stone-500">{done}/{tiff} tiffins</span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className={`font-bold text-sm ${allDone ? "text-green-800" : "text-stone-800"}`}>{col.name}</p>
-                  <p className="text-xs text-stone-400 flex items-center gap-1 mt-0.5 truncate">
-                    <MapPin size={10} />{col.area} · {col.landmark}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${allDone ? "bg-green-200 text-green-800" : "bg-amber-200 text-amber-900"}`}>
-                    {colDone}/{col.members.length}
-                  </span>
-                  {open ? <ChevronUp size={14} className="text-stone-400" /> : <ChevronDown size={14} className="text-stone-400" />}
-                </div>
-              </button>
-
-              {/* Member rows */}
-              {open && (
-                <div className="bg-white divide-y divide-stone-50">
-                  {col.members.map(m => {
-                    const isDone = m.status === "delivered";
-                    return (
-                      <div key={m.id} className={`px-3.5 py-3 transition-opacity ${isDone ? "opacity-40" : ""}`}>
-                        <div className="flex items-start gap-2.5">
-                          <HouseTag no={m.houseNo} done={isDone} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <p className="text-sm font-bold text-stone-800">{m.name}</p>
-                              <Pill status={m.status} />
-                            </div>
-                            <p className="text-xs text-stone-400 mt-0.5 leading-relaxed">{m.food}</p>
-                            {!isDone && (
-                              <div className="mt-2 flex gap-2">
-                                <MarkBtn
-                                  status={m.status}
-                                  onPacked={() => setMember(col.id, m.id, "packed")}
-                                  onDelivered={() => setMember(col.id, m.id, "delivered")}
-                                />
-                                <button className="flex items-center gap-1 text-xs text-stone-400 border border-stone-200 px-2 py-1 rounded-lg">
-                                  <Phone size={10} /> WA
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <SectionLabel>Individual</SectionLabel>
-
-        {indivs.map(ind => {
-          const isDone = ind.status === "delivered";
-          return (
-            <div key={ind.id}
-              className={`bg-white rounded-2xl border border-stone-200 px-3.5 py-3 transition-opacity ${isDone ? "opacity-40" : ""}`}>
-              <div className="flex items-start gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-stone-100 flex items-center justify-center flex-shrink-0">
-                  <Home size={17} className="text-stone-500" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className="text-sm font-bold text-stone-800">{ind.name}</p>
-                    <Pill status={ind.status} />
-                  </div>
-                  <p className="text-xs text-stone-500 flex items-center gap-1 mt-0.5">
-                    <MapPin size={10} className="flex-shrink-0" />{ind.address}
-                  </p>
-                  <p className="text-xs text-stone-400 mt-0.5">{ind.food}</p>
-                  {!isDone && (
-                    <div className="mt-2 flex gap-2">
-                      <MarkBtn
-                        status={ind.status}
-                        onPacked={() => setIndiv(ind.id, "packed")}
-                        onDelivered={() => setIndiv(ind.id, "delivered")}
-                      />
-                      <button className="flex items-center gap-1 text-xs text-stone-400 border border-stone-200 px-2 py-1 rounded-lg">
-                        <Phone size={10} /> WA
-                      </button>
-                    </div>
-                  )}
+                <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                  <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500" style={{ width: `${pct}%` }} />
                 </div>
               </div>
-            </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card className="mt-4 bg-gradient-to-br from-amber-500 to-amber-600 text-white">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-xs font-medium text-amber-50/90">Revenue · June 2026</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight">₹84,500</p>
+            <p className="mt-0.5 text-xs text-amber-50/80">collected so far</p>
+          </div>
+          <div className="rounded-xl bg-white/15 p-2 backdrop-blur"><TrendingUp size={20} /></div>
+        </div>
+        <div className="mt-4 flex gap-3">
+          <div className="flex-1 rounded-xl bg-white/15 p-3 backdrop-blur">
+            <p className="text-[10px] uppercase tracking-wider text-amber-50/80">Collected</p>
+            <p className="mt-1 text-lg font-bold">₹84,500</p>
+          </div>
+          <div className="flex-1 rounded-xl bg-white/15 p-3 backdrop-blur">
+            <p className="text-[10px] uppercase tracking-wider text-amber-50/80">Pending</p>
+            <p className="mt-1 text-lg font-bold">₹12,300</p>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ----------------------------- Manager Packing ---------------------------- */
+function ManagerPacking({ colonies, setColonies, totals }: {
+  colonies: Colony[]; setColonies: (c: Colony[]) => void; totals: { tiffins: number; packedTiffins: number };
+}) {
+  const togglePacked = (custId: string) => {
+    setColonies(colonies.map((c) => ({
+      ...c,
+      customers: c.customers.map((x) => {
+        if (x.id !== custId) return x;
+        if (x.status === "delivered") return x;
+        return { ...x, status: x.status === "packed" ? "pending" : "packed" };
+      }),
+    })));
+  };
+
+  const packAll = (colonyId: string) => {
+    setColonies(colonies.map((c) =>
+      c.id === colonyId
+        ? { ...c, customers: c.customers.map((x) => x.status === "delivered" ? x : { ...x, status: "packed" as Status }) }
+        : c
+    ));
+  };
+
+  const pct = totals.tiffins ? Math.round((totals.packedTiffins / totals.tiffins) * 100) : 0;
+
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">Kitchen · Packing</h1>
+      <p className="mt-1 text-sm text-stone-500">Tick tiffins as they leave the kitchen</p>
+
+      <Card className="mt-4 bg-gradient-to-br from-amber-500 to-amber-600 text-white">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-xs font-medium text-amber-50/90">Packed today</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight">
+              {totals.packedTiffins}<span className="text-base font-medium text-amber-50/80"> / {totals.tiffins}</span>
+            </p>
+            <p className="mt-0.5 text-xs text-amber-50/80">tiffins ready for dispatch</p>
+          </div>
+          <div className="rounded-xl bg-white/15 p-2 backdrop-blur"><PackageCheck size={20} /></div>
+        </div>
+        <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/20">
+          <div className="h-full rounded-full bg-white transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </Card>
+
+      <div className="mt-4 space-y-3">
+        {colonies.map((c) => {
+          const colonyTiff = c.customers.reduce((s, x) => s + x.qty, 0);
+          const colonyPacked = c.customers.filter((x) => x.status === "packed" || x.status === "delivered").reduce((s, x) => s + x.qty, 0);
+          const allDone = colonyPacked === colonyTiff;
+          return (
+            <Card key={c.id} className="!p-0 overflow-hidden">
+              <div className="flex items-center justify-between border-b border-stone-100 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-50 text-amber-700"><MapPin size={18} /></div>
+                  <div>
+                    <p className="font-bold text-stone-900">{c.name}</p>
+                    <p className="text-xs font-medium text-stone-500">{colonyPacked}/{colonyTiff} tiffins packed</p>
+                  </div>
+                </div>
+                <button onClick={() => packAll(c.id)} disabled={allDone}
+                  className="rounded-full bg-stone-900 px-3 py-2 text-[11px] font-bold text-white disabled:bg-stone-200 disabled:text-stone-400">
+                  Pack all
+                </button>
+              </div>
+              <div className="divide-y divide-stone-100">
+                {c.customers.map((cust) => {
+                  const isPacked = cust.status === "packed" || cust.status === "delivered";
+                  const locked = cust.status === "delivered";
+                  return (
+                    <button key={cust.id} onClick={() => togglePacked(cust.id)} disabled={locked}
+                      className="flex w-full items-center justify-between gap-3 p-4 text-left active:bg-stone-50 disabled:opacity-60">
+                      <div className="flex items-center gap-3">
+                        <div className={`grid h-11 w-11 place-items-center rounded-2xl text-sm font-extrabold ${isPacked ? "bg-green-500 text-white" : "bg-stone-100 text-stone-600"}`}>
+                          {isPacked ? <CheckCircle2 size={20} /> : cust.house}
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-stone-900">{cust.name}</p>
+                          <p className="text-xs text-stone-500">{cust.house} · {cust.food}</p>
+                        </div>
+                      </div>
+                      <QtyBadge qty={cust.qty} packed={isPacked} />
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
           );
         })}
       </div>
@@ -239,439 +310,580 @@ function DeliveryView({ cols, indivs, setCols, setIndivs }) {
   );
 }
 
-// ─── Owner View ─────────────────────────────────────────────────────────
-function OwnerView({ cols }) {
-  const [tab, setTab] = useState("customers");
-  const [exp, setExp] = useState({ c1: true, c2: false });
-
+function QtyBadge({ qty, packed }: { qty: number; packed: boolean }) {
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="bg-white border-b border-stone-100 px-3 py-2 flex gap-1 flex-shrink-0">
-        {["overview", "customers", "payments", "menu"].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 text-xs font-bold py-1.5 rounded-lg capitalize transition-all ${tab === t ? "bg-stone-900 text-white" : "text-stone-400"}`}>
-            {t}
-          </button>
+    <div className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold ${packed ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+      <Soup size={13} />×{qty}
+    </div>
+  );
+}
+
+function ManagerCustomers({ colonies }: { colonies: Colony[] }) {
+  const [open, setOpen] = useState<string | null>(colonies[0]?.id ?? null);
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
+      <p className="mt-1 text-sm text-stone-500">Grouped by colony</p>
+
+      <div className="mt-4 space-y-3">
+        {colonies.map((c) => (
+          <Card key={c.id} className="!p-0 overflow-hidden">
+            <button onClick={() => setOpen(open === c.id ? null : c.id)} className="flex w-full items-center justify-between p-4">
+              <div className="text-left">
+                <p className="font-semibold text-stone-900">{c.name}</p>
+                <p className="text-xs text-stone-500">{c.customers.length} customers · {c.customers.reduce((s, x) => s + x.qty, 0)} tiffins</p>
+              </div>
+              {open === c.id ? <ChevronUp size={18} className="text-stone-500" /> : <ChevronDown size={18} className="text-stone-500" />}
+            </button>
+            {open === c.id && (
+              <div className="divide-y divide-stone-100 border-t border-stone-100">
+                {c.customers.map((cust) => (
+                  <div key={cust.id} className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-50 text-xs font-bold text-amber-700">{cust.house}</div>
+                      <div>
+                        <p className="text-sm font-semibold">
+                          {cust.name}
+                          {cust.qty > 1 && (
+                            <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">×{cust.qty}</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-stone-500">{cust.phone}</p>
+                      </div>
+                    </div>
+                    <StatusPill status={cust.status} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pt-3 pb-6 space-y-2.5">
+      <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-stone-900 px-4 py-4 text-sm font-semibold text-white shadow-lg shadow-stone-900/10">
+        <Plus size={16} /> Enter Edit Mode (Add/Edit Customers)
+      </button>
+    </div>
+  );
+}
 
-        {tab === "overview" && (
-          <>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { v: "10", l: "Customers", icon: <Users size={15} className="text-stone-500" />, bg: "bg-stone-50 border-stone-100" },
-                { v: "6",  l: "Pending",   icon: <AlertCircle size={15} className="text-red-500" />, bg: "bg-red-50 border-red-100" },
-                { v: "4",  l: "Delivered", icon: <CheckCircle2 size={15} className="text-green-500" />, bg: "bg-green-50 border-green-100" },
-              ].map(s => (
-                <div key={s.l} className={`rounded-xl p-3 text-center border ${s.bg}`}>
-                  <div className="flex justify-center mb-1">{s.icon}</div>
-                  <p className="text-xl font-black text-stone-900">{s.v}</p>
-                  <p className="text-xs text-stone-500">{s.l}</p>
-                </div>
-              ))}
+function ManagerPayments({ colonies }: { colonies: Colony[] }) {
+  const dues = colonies.flatMap((c) => c.customers.filter((x) => x.dueAmount).map((x) => ({ ...x, colony: c.name })));
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">Payments</h1>
+      <p className="mt-1 text-sm text-stone-500">Outstanding dues this month</p>
+
+      <Card className="mt-4 bg-gradient-to-br from-stone-900 to-stone-800 text-white">
+        <p className="text-xs font-medium text-stone-300">Total Outstanding</p>
+        <p className="mt-1 flex items-center text-3xl font-bold"><IndianRupee size={22} />12,300</p>
+        <p className="mt-0.5 text-xs text-stone-400">across 8 customers</p>
+      </Card>
+
+      <div className="mt-4 space-y-2">
+        {dues.map((d) => (
+          <Card key={d.id} className="!p-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold">{d.name}</p>
+              <p className="text-xs text-stone-500">{d.colony} · {d.house}</p>
             </div>
-            <div className="bg-amber-50 rounded-xl p-4 border border-amber-100">
-              <p className="text-xs font-bold text-amber-900 mb-3">Colony progress today</p>
-              {cols.map(c => {
-                const done = c.members.filter(m => m.status === "delivered").length;
-                const pct = Math.round((done / c.members.length) * 100);
-                return (
-                  <div key={c.id} className="mb-2.5">
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="font-semibold text-stone-700">{c.name}</span>
-                      <span className="font-bold text-amber-900">{done}/{c.members.length}</span>
-                    </div>
-                    <div className="h-1.5 bg-amber-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-amber-600 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600">₹{d.dueAmount}</span>
+              <button className="rounded-full bg-amber-500 p-2 text-white shadow-sm"><MessageCircle size={14} /></button>
             </div>
-            <div className="bg-white rounded-xl p-4 border border-stone-100">
-              <p className="text-xs text-stone-400 font-medium mb-2">June 2026</p>
-              <div className="flex justify-between">
-                <div><p className="text-xl font-black text-stone-900">₹18,500</p><p className="text-xs text-stone-400">collected</p></div>
-                <div className="text-right"><p className="text-xl font-black text-red-500">₹3,200</p><p className="text-xs text-stone-400">pending</p></div>
+          </Card>
+        ))}
+        {dues.length === 0 && <p className="py-10 text-center text-sm text-stone-400">All caught up 🎉</p>}
+      </div>
+    </div>
+  );
+}
+
+function ManagerMenu() {
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">Weekly Menu</h1>
+      <p className="mt-1 text-sm text-stone-500">Planned dispatch for the week</p>
+      <div className="mt-4 space-y-2">
+        {weekMenu.map((m) => (
+          <Card key={m.day} className="!p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">{m.day}</p>
+              <p className="mt-0.5 text-sm font-semibold text-stone-800">{m.lunch}</p>
+            </div>
+            <UtensilsCrossed size={18} className="text-stone-300" />
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============================ DELIVERY VIEW ============================= */
+function DeliveryView({ colonies, setColonies }: { colonies: Colony[]; setColonies: (c: Colony[]) => void; }) {
+  const dispatchable = useMemo(
+    () => colonies.map((c) => ({ ...c, customers: c.customers.filter((x) => x.status !== "pending") })).filter((c) => c.customers.length > 0),
+    [colonies],
+  );
+
+  const [activeColonyId, setActiveColonyId] = useState<string>(dispatchable[0]?.id ?? colonies[0].id);
+  const activeColony = dispatchable.find((c) => c.id === activeColonyId) ?? dispatchable[0] ?? colonies[0];
+
+  const allCust = dispatchable.flatMap((c) => c.customers);
+  const totalTiff = allCust.reduce((s, x) => s + x.qty, 0);
+  const deliveredTiff = allCust.filter((x) => x.status === "delivered").reduce((s, x) => s + x.qty, 0);
+  const pct = totalTiff ? Math.round((deliveredTiff / totalTiff) * 100) : 0;
+
+  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short" });
+
+  const markDelivered = (custId: string) => {
+    setColonies(colonies.map((c) => ({
+      ...c,
+      customers: c.customers.map((x) => x.id === custId ? { ...x, status: "delivered" as Status } : x),
+    })));
+  };
+
+  const markAllInColony = (colonyId: string) => {
+    setColonies(colonies.map((c) =>
+      c.id === colonyId
+        ? { ...c, customers: c.customers.map((x) => x.status === "packed" ? { ...x, status: "delivered" as Status } : x) }
+        : c
+    ));
+  };
+
+  const colonyPending = activeColony ? activeColony.customers.filter((x) => x.status === "packed") : [];
+  const colonyDelivered = activeColony ? activeColony.customers.filter((x) => x.status === "delivered") : [];
+  const colonyTiff = activeColony ? activeColony.customers.reduce((s, x) => s + x.qty, 0) : 0;
+  const colonyDoneTiff = colonyDelivered.reduce((s, x) => s + x.qty, 0);
+
+  const mapsUrl = activeColony
+    ? `https://www.google.com/maps/dir/?api=1&destination=${activeColony.lat},${activeColony.lng}`
+    : "#";
+
+  return (
+    <>
+      <div className="sticky top-[49px] z-30 border-b border-amber-100 bg-amber-50/95 backdrop-blur-md">
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700">{today} · Run</p>
+              <p className="mt-0.5 text-2xl font-bold tracking-tight text-stone-900">
+                {deliveredTiff}/{totalTiff} <span className="text-sm font-medium text-stone-500">tiffins delivered</span>
+              </p>
+            </div>
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-500 text-white shadow-md shadow-amber-500/30"><Truck size={22} /></div>
+          </div>
+          <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/70">
+            <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-600 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 pt-4">
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {dispatchable.map((c) => {
+            const done = c.customers.every((x) => x.status === "delivered");
+            const active = c.id === activeColonyId;
+            return (
+              <button key={c.id} onClick={() => setActiveColonyId(c.id)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold transition ${
+                  active ? "bg-stone-900 text-white" : done ? "bg-green-100 text-green-700" : "bg-white text-stone-700 border border-stone-200"
+                }`}>
+                <MapPin size={12} />{c.name}{done && <CheckCircle2 size={12} />}
+              </button>
+            );
+          })}
+          {dispatchable.length === 0 && <p className="text-sm text-stone-500">Nothing packed yet. Ask the kitchen.</p>}
+        </div>
+      </div>
+
+      {activeColony && dispatchable.length > 0 && (
+        <div className="space-y-4 px-4 pt-4">
+          <div className="overflow-hidden rounded-3xl border-2 border-stone-200 bg-white">
+            <ColonyMap colony={activeColony} />
+            <div className="flex items-center justify-between gap-3 p-4">
+              <div>
+                <p className="text-base font-bold text-stone-900">{activeColony.name}</p>
+                <p className="text-xs font-medium text-stone-500">{colonyDoneTiff}/{colonyTiff} tiffins delivered</p>
               </div>
-            </div>
-          </>
-        )}
-
-        {tab === "customers" && (
-          <>
-            <div className="flex gap-2">
-              {[
-                { v: "2", l: "Colonies",       cl: "bg-amber-50 border-amber-200 text-amber-900" },
-                { v: "6", l: "Colony members", cl: "bg-stone-50 border-stone-100 text-stone-900" },
-                { v: "3", l: "Individual",     cl: "bg-stone-50 border-stone-100 text-stone-900" },
-              ].map(s => (
-                <div key={s.l} className={`flex-1 rounded-xl px-2 py-2.5 text-center border ${s.cl.split(" ").slice(0,2).join(" ")}`}>
-                  <p className={`text-xl font-black ${s.cl.split(" ")[2]}`}>{s.v}</p>
-                  <p className="text-xs text-stone-400 leading-tight mt-0.5">{s.l}</p>
-                </div>
-              ))}
-            </div>
-
-            <SectionLabel>Colonies</SectionLabel>
-
-            {cols.map(col => (
-              <div key={col.id} className="rounded-2xl overflow-hidden border-2 border-amber-100">
-                <button onClick={() => setExp(e => ({ ...e, [col.id]: !e[col.id] }))}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-3 bg-amber-50 text-left">
-                  <Building2 size={18} className="text-amber-700 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-stone-800 text-sm">{col.name}</p>
-                    <p className="text-xs text-stone-400 truncate">{col.area} · {col.members.length} members · {col.landmark}</p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button className="text-xs bg-amber-200 text-amber-900 font-bold px-2 py-0.5 rounded-full"
-                      onClick={e => e.stopPropagation()}>+ Add</button>
-                    {exp[col.id] ? <ChevronUp size={14} className="text-stone-400" /> : <ChevronDown size={14} className="text-stone-400" />}
-                  </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => markAllInColony(activeColony.id)} disabled={colonyPending.length === 0}
+                  className={`flex items-center gap-1.5 rounded-2xl px-4 py-3 text-xs font-bold shadow-md active:scale-[0.98] transition ${
+                    colonyPending.length === 0 ? "bg-green-100 text-green-700 shadow-none" : "bg-green-600 text-white shadow-green-600/30"
+                  }`}>
+                  {colonyPending.length === 0 ? (<><CheckCircle2 size={14} /> All Done</>) : (<><CheckCircle2 size={14} /> Deliver All</>)}
                 </button>
-
-                {exp[col.id] && (
-                  <div className="bg-white">
-                    <div className="px-3.5 py-1.5 bg-stone-50 border-b border-stone-100 flex gap-3">
-                      <p className="text-xs font-bold text-stone-400 w-14">House</p>
-                      <p className="text-xs font-bold text-stone-400 flex-1">Customer</p>
-                      <p className="text-xs font-bold text-stone-400">Food</p>
-                    </div>
-                    {col.members.map(m => (
-                      <div key={m.id} className="flex items-center gap-3 px-3.5 py-2.5 border-b border-stone-50 last:border-0">
-                        <span className="text-xs font-black text-amber-900 font-mono bg-amber-50 px-2 py-0.5 rounded w-14 text-center flex-shrink-0">{m.houseNo}</span>
-                        <p className="text-sm font-medium text-stone-800 flex-1">{m.name}</p>
-                        <p className="text-xs text-stone-400">{m.food.split("·")[0].trim()}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 rounded-2xl bg-blue-600 px-4 py-3 text-xs font-bold text-white shadow-md shadow-blue-600/30 active:scale-[0.98]">
+                  <Navigation size={14} /> Navigate
+                </a>
               </div>
-            ))}
+            </div>
+          </div>
 
-            <SectionLabel>Individual</SectionLabel>
+          <button onClick={() => markAllInColony(activeColony.id)} disabled={colonyPending.length === 0}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-green-600 py-5 text-base font-extrabold text-white shadow-lg shadow-green-600/30 transition active:scale-[0.99] disabled:bg-stone-200 disabled:text-stone-400 disabled:shadow-none">
+            <CheckCircle2 size={20} />
+            {colonyPending.length === 0 ? `${activeColony.name} — All Done` : `Mark all ${colonyPending.length} stops Delivered`}
+          </button>
 
-            {[
-              { name: "Anjali Tiwari",  addr: "42 Gandhi Nagar, Sector 7" },
-              { name: "Vikram Sahu",    addr: "7 Telibandha, Ring Road" },
-              { name: "Sunita Agarwal", addr: "15 Nehru Nagar, Block C" },
-            ].map(p => (
-              <div key={p.name} className="bg-white rounded-xl border border-stone-100 px-3.5 py-3 flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-stone-100 flex items-center justify-center flex-shrink-0">
-                  <Home size={15} className="text-stone-500" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-stone-800">{p.name}</p>
-                  <p className="text-xs text-stone-400 flex items-center gap-1 truncate"><MapPin size={10} />{p.addr}</p>
-                </div>
-              </div>
-            ))}
-
-            <button className="w-full border-2 border-dashed border-stone-200 rounded-2xl py-3 text-sm font-bold text-stone-400">
-              + Add customer
-            </button>
-          </>
-        )}
-
-        {tab === "payments" && (
-          <>
-            {[
-              { name: "Rahul Sharma",  sub: "H-12, Shankar Nagar", due: 2000, paid: 1500 },
-              { name: "Priya Verma",   sub: "H-15, Shankar Nagar", due: 1800, paid: 1800 },
-              { name: "Anjali Tiwari", sub: "42 Gandhi Nagar",      due: 2000, paid: 2000 },
-              { name: "Vikram Sahu",   sub: "7 Telibandha",         due: 1600, paid: 800 },
-              { name: "Suresh Yadav",  sub: "B-7, MIG Colony",      due: 1800, paid: 900 },
-            ].map(p => {
-              const full = p.paid >= p.due;
-              const pct = Math.round((p.paid / p.due) * 100);
+          <div className="overflow-hidden rounded-3xl border-2 border-stone-200 bg-white">
+            <div className="border-b border-stone-100 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">Stops</p>
+            </div>
+            {activeColony.customers.map((cust) => {
+              const done = cust.status === "delivered";
               return (
-                <div key={p.name} className="bg-white rounded-xl border border-stone-100 px-3.5 py-3">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-sm font-bold text-stone-800">{p.name}</p>
-                      <p className="text-xs text-stone-400">{p.sub}</p>
+                <div key={cust.id} className={`border-b border-stone-100 p-4 transition ${done ? "bg-green-50/40" : ""} last:border-b-0`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className={`grid h-12 w-12 place-items-center rounded-2xl text-sm font-extrabold ${done ? "bg-green-500 text-white" : "bg-stone-100 text-stone-700"}`}>
+                        {done ? <CheckCircle2 size={22} /> : cust.house}
+                      </div>
+                      <div>
+                        <p className="text-base font-bold text-stone-900">{cust.name}</p>
+                        <p className="text-xs text-stone-500">{cust.house} · {cust.qty} tiffin{cust.qty > 1 ? "s" : ""}</p>
+                      </div>
                     </div>
-                    {full
-                      ? <span className="text-xs font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded-full">Paid</span>
-                      : <span className="text-xs font-bold text-red-600">₹{(p.due - p.paid).toLocaleString()} due</span>
-                    }
+                    <a href={`tel:${cust.phone}`} className="grid h-10 w-10 place-items-center rounded-full border border-stone-200 bg-white text-stone-600 shadow-sm">
+                      <Phone size={16} />
+                    </a>
                   </div>
-                  <div className="mt-2 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${full ? "bg-green-400" : "bg-amber-400"}`} style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="text-xs text-stone-400 mt-1">₹{p.paid.toLocaleString()} of ₹{p.due.toLocaleString()}</p>
+                  <button onClick={() => markDelivered(cust.id)} disabled={done}
+                    className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-sm font-bold transition active:scale-[0.98] ${
+                      done ? "bg-green-100 text-green-700" : "bg-stone-900 text-white shadow-md shadow-stone-900/20"
+                    }`}>
+                    {done ? (<><CheckCircle2 size={16} /> Delivered</>) : (<>Mark Delivered · {cust.qty} tiffin{cust.qty > 1 ? "s" : ""}</>)}
+                  </button>
                 </div>
               );
             })}
-          </>
-        )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
-        {tab === "menu" && (
-          <>
-            {WEEK.map(d => (
-              <div key={d.day}
-                className={`flex gap-3 items-center rounded-xl px-3.5 py-2.5 ${d.today ? "bg-amber-500" : d.past ? "bg-stone-50 opacity-30" : "bg-stone-50"}`}>
-                <div className="w-10 text-center flex-shrink-0">
-                  <p className={`text-xs font-bold ${d.today ? "text-amber-100" : "text-stone-500"}`}>{d.day}</p>
-                  <p className={`text-xs ${d.today ? "text-amber-200" : "text-stone-400"}`}>{d.date} Jun</p>
-                </div>
-                <p className={`text-sm flex-1 ${d.today ? "text-white font-semibold" : "text-stone-700"}`}>{d.items}</p>
-                {!d.past && (
-                  <span className={`text-xs ${d.today ? "text-amber-200" : "text-stone-400"}`}>Edit</span>
-                )}
+/* ---------------------------- Mini Map (mock) ---------------------------- */
+function ColonyMap({ colony }: { colony: Colony }) {
+  const stops = colony.customers.map((c, i) => {
+    const angle = (i / colony.customers.length) * Math.PI * 2;
+    const radius = 28 + (i % 2) * 8;
+    return { ...c, x: 50 + Math.cos(angle) * radius, y: 50 + Math.sin(angle) * radius * 0.7 };
+  });
+  return (
+    <div className="relative h-44 w-full overflow-hidden bg-[linear-gradient(135deg,#fef3c7_0%,#fde68a_100%)]">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+        <defs>
+          <pattern id="grid" width="14" height="14" patternUnits="userSpaceOnUse">
+            <path d="M 14 0 L 0 0 0 14" fill="none" stroke="rgba(180,140,60,0.18)" strokeWidth="0.6" />
+          </pattern>
+        </defs>
+        <rect width="100" height="100" fill="url(#grid)" />
+        <path d="M0,55 Q40,40 100,60" stroke="rgba(255,255,255,0.85)" strokeWidth="3" fill="none" />
+        <path d="M55,0 Q45,50 60,100" stroke="rgba(255,255,255,0.85)" strokeWidth="3" fill="none" />
+      </svg>
+      <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[10px] font-bold text-stone-700 shadow">
+        <Bike size={11} className="text-amber-600" /> You
+      </div>
+      {stops.map((s) => {
+        const done = s.status === "delivered";
+        return (
+          <div key={s.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${s.x}%`, top: `${s.y}%` }}>
+            <div className={`grid h-7 w-7 place-items-center rounded-full border-2 border-white text-[10px] font-extrabold shadow-md ${done ? "bg-green-500 text-white" : "bg-stone-900 text-white"}`}>
+              {done ? "✓" : s.house.replace(/[^0-9]/g, "")}
+            </div>
+          </div>
+        );
+      })}
+      <div className="absolute bottom-2 right-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-semibold text-stone-600 shadow">
+        {colony.customers.length} stops
+      </div>
+    </div>
+  );
+}
+
+/* ============================ CUSTOMER VIEW ============================= */
+function CustomerView({ colonies }: { colonies: Colony[] }) {
+  const [tab, setTab] = useState<"home" | "menu" | "payment" | "alerts">("home");
+  const me = colonies[0].customers[0];
+
+  return (
+    <>
+      {tab === "home" && <CustomerHome me={me} />}
+      {tab === "menu" && <CustomerMenuTab />}
+      {tab === "payment" && <CustomerPayment me={me} />}
+      {tab === "alerts" && <CustomerAlerts />}
+      <BottomNav
+        items={[
+          { key: "home", label: "Home", icon: Home },
+          { key: "menu", label: "Menu", icon: UtensilsCrossed },
+          { key: "payment", label: "Payment", icon: Wallet },
+          { key: "alerts", label: "Alerts", icon: Bell },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as typeof tab)}
+      />
+    </>
+  );
+}
+
+function CustomerHome({ me }: { me: Customer }) {
+  const isSunday = new Date().getDay() === 0;
+  const mealToday = isSunday ? "Special — Pav Bhaji" : "Roti, Rice, Daal";
+  const step = me.status === "delivered" ? 2 : me.status === "packed" ? 1 : 0;
+
+  return (
+    <div>
+      <div className="relative overflow-hidden bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 px-5 pt-6 pb-10 text-white">
+        <div className="absolute -top-10 -right-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
+        <p className="text-xs font-medium text-amber-50/90">Welcome back</p>
+        <h1 className="mt-1 text-3xl font-bold tracking-tight">Hi, Rahul! 👋</h1>
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-50/90"><MapPin size={12} /> H-12, Shankar Nagar</div>
+      </div>
+
+      <div className="-mt-6 space-y-4 px-4">
+        <Card>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Today's Tiffin</p>
+              <p className="mt-1 text-xl font-bold text-stone-900">{mealToday}</p>
+              <p className="mt-0.5 text-xs text-stone-500">Lunch · 12:30 – 1:30 PM</p>
+            </div>
+            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-amber-50 text-amber-600">
+              <div className="flex flex-col items-center leading-none">
+                <Soup size={20} />
+                <span className="mt-0.5 text-[10px] font-extrabold text-amber-700">×{me.qty}</span>
               </div>
-            ))}
-          </>
+            </div>
+          </div>
+          {me.qty > 1 && (
+            <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700">
+              You have {me.qty} tiffins on subscription
+            </p>
+          )}
+        </Card>
+
+        <Card>
+          <p className="text-xs font-semibold uppercase tracking-wider text-stone-500">Delivery Status</p>
+          <div className="mt-4 flex items-center">
+            <TrackStep icon={Package} label="Packed" active={step >= 1} />
+            <div className={`mx-2 h-1 flex-1 rounded-full ${step >= 2 ? "bg-green-500" : step >= 1 ? "bg-amber-400" : "bg-stone-200"}`} />
+            <TrackStep icon={CheckCircle2} label="Delivered" active={step >= 2} done={step >= 2} />
+          </div>
+          <div className={`mt-4 flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium ${
+            step >= 2 ? "bg-green-50 text-green-700" : step >= 1 ? "bg-amber-50 text-amber-700" : "bg-stone-100 text-stone-600"
+          }`}>
+            <Truck size={16} />
+            {step >= 2 ? "Delivered. Enjoy your meal!" : step >= 1 ? "Your tiffin is on the way!" : "We're preparing your tiffin"}
+          </div>
+        </Card>
+
+        {me.dueAmount && (
+          <Card className="border-red-100 bg-red-50/60">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-red-100 text-red-600"><AlertCircle size={18} /></div>
+                <div>
+                  <p className="text-sm font-bold text-red-700">₹{me.dueAmount} due this month</p>
+                  <p className="text-xs text-red-600/80">Please clear by 30th June</p>
+                </div>
+              </div>
+              <button className="rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow-sm">Pay</button>
+            </div>
+          </Card>
         )}
       </div>
     </div>
   );
 }
 
-// ─── Customer View ──────────────────────────────────────────────────────
-function CustomerView() {
-  const [tab, setTab] = useState("home");
-  const delivStatus = "packed";
-
+function TrackStep({ icon: Icon, label, active, done }: { icon: typeof Package; label: string; active: boolean; done?: boolean; }) {
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Flat amber header */}
-      <div className="bg-amber-500 px-4 pt-5 pb-5 flex-shrink-0">
-        <p className="text-amber-100 text-sm">Good afternoon</p>
-        <p className="text-white text-2xl font-black mt-0.5">Hi, Rahul!</p>
-        <p className="text-amber-200 text-xs mt-0.5">Annapurna Tiffins · H-12, Shankar Nagar</p>
+    <div className="flex flex-col items-center gap-1.5">
+      <div className={`grid h-14 w-14 place-items-center rounded-2xl transition ${
+        done ? "bg-green-500 text-white shadow-md shadow-green-500/30"
+        : active ? "bg-amber-500 text-white shadow-md shadow-amber-500/30"
+        : "bg-stone-100 text-stone-400"
+      }`}>
+        <Icon size={22} />
       </div>
+      <p className={`text-xs font-semibold ${active ? "text-stone-900" : "text-stone-400"}`}>{label}</p>
+    </div>
+  );
+}
 
-      {/* Tabs */}
-      <div className="bg-white border-b border-stone-100 flex flex-shrink-0">
-        {[
-          { id: "home", label: "Home" },
-          { id: "menu", label: "Menu" },
-          { id: "payment", label: "Payment" },
-          { id: "alerts", label: "Alerts  2", badge: true },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex-1 text-xs font-bold py-2.5 border-b-2 transition-all relative ${tab === t.id ? "border-amber-500 text-amber-600" : "border-transparent text-stone-400"}`}>
-            {t.id === "alerts" ? (
-              <span className="flex items-center justify-center gap-1">
-                Alerts
-                <span className="bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">2</span>
-              </span>
-            ) : t.label}
-          </button>
+function CustomerMenuTab() {
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">This Week's Menu</h1>
+      <p className="mt-1 text-sm text-stone-500">View only — no changes here</p>
+      <div className="mt-4 space-y-2">
+        {weekMenu.map((m) => (
+          <Card key={m.day} className="!p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">{m.day}</p>
+              <p className="mt-0.5 text-sm font-semibold text-stone-800">{m.lunch}</p>
+            </div>
+            <UtensilsCrossed size={18} className="text-stone-300" />
+          </Card>
         ))}
       </div>
+    </div>
+  );
+}
 
-      <div className="flex-1 overflow-y-auto px-3 pt-3 pb-6 space-y-3">
+function CustomerPayment({ me }: { me: Customer }) {
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">Payments</h1>
+      <p className="mt-1 text-sm text-stone-500">Your monthly summary · {me.qty} tiffin/day plan</p>
 
-        {tab === "home" && (
-          <>
-            {/* Menu hero */}
-            <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <UtensilsCrossed size={17} className="text-amber-600 flex-shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wide">Today's menu</p>
-                  <p className="text-xs text-amber-500">Sun, 29 Jun 2026</p>
-                </div>
-              </div>
-              <p className="text-stone-800 font-bold text-base leading-snug">
-                Dal Makhani · Jeera Rice · Roti ×4 · Raita
-              </p>
-            </div>
+      <Card className="mt-4 bg-gradient-to-br from-amber-500 to-amber-600 text-white">
+        <p className="text-xs font-medium text-amber-50/90">June 2026</p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-white/15 p-3 backdrop-blur">
+            <p className="text-[10px] uppercase tracking-wider text-amber-50/80">Paid</p>
+            <p className="mt-1 text-xl font-bold">₹{2500 * me.qty}</p>
+          </div>
+          <div className="rounded-xl bg-white/15 p-3 backdrop-blur">
+            <p className="text-[10px] uppercase tracking-wider text-amber-50/80">Due</p>
+            <p className="mt-1 text-xl font-bold">₹{me.dueAmount ?? 0}</p>
+          </div>
+        </div>
+      </Card>
 
-            {/* 2-step tracker */}
-            <div className="bg-white border border-stone-200 rounded-2xl p-4">
-              <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-4">Delivery</p>
-              <div className="flex items-center">
-                <div className="flex flex-col items-center flex-1">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${delivStatus !== "pending" ? "bg-amber-500" : "bg-stone-100"}`}>
-                    {delivStatus !== "pending"
-                      ? <Package size={22} className="text-white" />
-                      : <span className="text-stone-300 font-black">1</span>}
-                  </div>
-                  <p className={`text-xs font-bold mt-2 ${delivStatus !== "pending" ? "text-amber-600" : "text-stone-300"}`}>Packed</p>
-                </div>
-
-                <div className="flex-1 mx-2 h-2 bg-stone-100 rounded-full overflow-hidden">
-                  <div className={`h-full bg-amber-500 rounded-full transition-all ${delivStatus === "delivered" ? "w-full" : "w-0"}`} />
-                </div>
-
-                <div className="flex flex-col items-center flex-1">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${delivStatus === "delivered" ? "bg-green-500" : "bg-stone-100"}`}>
-                    {delivStatus === "delivered"
-                      ? <CheckCircle2 size={22} className="text-white" />
-                      : <span className="text-stone-300 font-black">2</span>}
-                  </div>
-                  <p className={`text-xs font-bold mt-2 ${delivStatus === "delivered" ? "text-green-600" : "text-stone-300"}`}>Delivered</p>
-                </div>
-              </div>
-
-              <div className={`mt-4 rounded-xl py-2.5 px-3 text-center ${delivStatus === "packed" ? "bg-amber-50" : "bg-stone-50"}`}>
-                <p className={`text-sm font-bold ${delivStatus === "packed" ? "text-amber-700" : "text-stone-400"}`}>
-                  {delivStatus === "pending" ? "Being prepared in the kitchen" : null}
-                  {delivStatus === "packed" ? "Your tiffin is on the way!" : null}
-                  {delivStatus === "delivered" ? "Delivered! Enjoy your meal" : null}
-                </p>
-              </div>
-            </div>
-
-            {/* Payment nudge */}
-            <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-2.5 flex items-center justify-between">
+      <Card className="mt-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-stone-500">Recent activity</p>
+        <div className="mt-3 space-y-3">
+          {[
+            { label: "May 2026", amount: 3000 * me.qty, paid: true },
+            { label: "April 2026", amount: 3000 * me.qty, paid: true },
+            { label: "March 2026", amount: 3000 * me.qty, paid: true },
+          ].map((r) => (
+            <div key={r.label} className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-bold text-red-700">₹500 due this month</p>
-                <p className="text-xs text-red-400">June 2026</p>
+                <p className="text-sm font-semibold text-stone-800">{r.label}</p>
+                <p className="text-xs text-stone-500">Monthly subscription · ×{me.qty}</p>
               </div>
-              <button className="text-xs font-bold text-red-600 border border-red-200 bg-white px-2.5 py-1 rounded-lg">View</button>
-            </div>
-          </>
-        )}
-
-        {tab === "menu" && (
-          <>
-            {/* Today featured */}
-            <div className="bg-amber-500 rounded-2xl p-4 text-white">
-              <p className="text-xs font-bold text-amber-100 uppercase tracking-wide">Today · Sun 29 Jun</p>
-              <p className="text-lg font-black mt-1.5 leading-snug">Dal Makhani · Jeera Rice · Roti ×4 · Raita</p>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {["Dal Makhani", "Jeera Rice", "Roti ×4", "Raita"].map(i => (
-                  <span key={i} className="text-xs bg-white bg-opacity-20 text-white px-2 py-0.5 rounded-full">{i}</span>
-                ))}
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-stone-800">₹{r.amount}</span>
+                <span className="rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">PAID</span>
               </div>
             </div>
-            {WEEK.filter(d => !d.today).map(d => (
-              <div key={d.day} className={`flex gap-3 items-center rounded-xl px-3.5 py-2.5 ${d.past ? "opacity-30" : "bg-stone-50"}`}>
-                <div className="w-10 text-center flex-shrink-0">
-                  <p className="text-xs font-bold text-stone-500">{d.day}</p>
-                  <p className="text-xs text-stone-400">{d.date} Jun</p>
-                </div>
-                <div className="w-0.5 h-7 bg-amber-200 rounded-full flex-shrink-0" />
-                <p className="text-sm text-stone-600 flex-1">{d.items}</p>
-              </div>
-            ))}
-          </>
-        )}
+          ))}
+        </div>
+      </Card>
 
-        {tab === "payment" && (
-          <>
-            <div className="bg-white rounded-2xl border border-stone-100 p-4">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs text-stone-400">June 2026</p>
-                  <p className="text-3xl font-black text-stone-900 mt-1">₹1,500</p>
-                  <p className="text-xs text-stone-400">paid of ₹2,000</p>
+      <button className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-green-600 px-4 py-4 text-sm font-bold text-white shadow-lg shadow-green-600/20 active:scale-[0.99]">
+        <MessageCircle size={16} /> Send "I've Paid" via WhatsApp
+      </button>
+    </div>
+  );
+}
+
+function CustomerAlerts() {
+  const alerts = [
+    { title: "Sunday Special!", body: "Pav Bhaji this Sunday. Stay tuned.", time: "2h ago", tone: "amber" as const },
+    { title: "Payment reminder", body: "₹500 pending for June. Please clear soon.", time: "1d ago", tone: "red" as const },
+    { title: "Delivery delayed", body: "Today's tiffin running 15 min late.", time: "2d ago", tone: "stone" as const },
+  ];
+  return (
+    <div className="px-4 pt-4">
+      <h1 className="text-2xl font-bold tracking-tight">Alerts</h1>
+      <p className="mt-1 text-sm text-stone-500">Messages from your kitchen</p>
+      <div className="mt-4 space-y-2">
+        {alerts.map((a, i) => (
+          <Card key={i} className="!p-4">
+            <div className="flex items-start gap-3">
+              <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
+                a.tone === "amber" ? "bg-amber-100 text-amber-700"
+                : a.tone === "red" ? "bg-red-100 text-red-600"
+                : "bg-stone-100 text-stone-600"
+              }`}>
+                <Bell size={16} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-bold text-stone-900">{a.title}</p>
+                  <span className="text-[10px] font-medium text-stone-400">{a.time}</span>
                 </div>
-                <span className="text-sm font-bold text-red-500 bg-red-50 px-2 py-1 rounded-lg">₹500 due</span>
+                <p className="mt-0.5 text-xs text-stone-600">{a.body}</p>
               </div>
-              <div className="mt-4 h-2 bg-stone-100 rounded-full overflow-hidden">
-                <div className="h-full bg-amber-400 rounded-full" style={{ width: "75%" }} />
-              </div>
-              <p className="text-xs text-stone-400 mt-1 text-right">75% paid</p>
             </div>
-
-            <div className="bg-white rounded-2xl border border-stone-100 divide-y divide-stone-50">
-              {[{ date: "18 Jun", amt: "₹500" }, { date: "05 Jun", amt: "₹1,000" }].map(p => (
-                <div key={p.date} className="px-4 py-3 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 size={15} className="text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-stone-800">{p.date}</p>
-                    <p className="text-xs text-stone-400">Confirmed by owner</p>
-                  </div>
-                  <p className="text-sm font-bold text-stone-800">{p.amt}</p>
-                </div>
-              ))}
-            </div>
-
-            <button className="w-full bg-amber-500 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2">
-              <Phone size={16} /> Send "I've paid" to owner
-            </button>
-          </>
-        )}
-
-        {tab === "alerts" && (
-          <>
-            {[
-              { icon: <Package size={18} className="text-amber-600" />,   msg: "Your tiffin is packed and on the way!", time: "Today, 12:15 PM",   unread: true },
-              { icon: <CreditCard size={18} className="text-green-600" />, msg: "Payment of ₹500 confirmed",             time: "27 Jun, 6:00 PM",   unread: true },
-              { icon: <CheckCircle2 size={18} className="text-stone-400" />, msg: "Tiffin delivered! Enjoy your meal.",  time: "26 Jun, 1:15 PM",   unread: false },
-              { icon: <CreditCard size={18} className="text-stone-400" />, msg: "Payment of ₹1,000 confirmed",           time: "05 Jun, 3:00 PM",   unread: false },
-            ].map((n, i) => (
-              <div key={i} className={`flex gap-3 rounded-2xl px-4 py-3 border ${n.unread ? "bg-amber-50 border-amber-100" : "bg-white border-stone-100 opacity-50"}`}>
-                <div className="w-9 h-9 rounded-full bg-white border border-stone-100 flex items-center justify-center flex-shrink-0">
-                  {n.icon}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-stone-800">{n.msg}</p>
-                  <p className="text-xs text-stone-400 mt-0.5">{n.time}</p>
-                </div>
-                {n.unread && <div className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />}
-              </div>
-            ))}
-          </>
-        )}
+          </Card>
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── Root ───────────────────────────────────────────────────────────────
-export default function TiffinTrackUI() {
-  const [role, setRole] = useState("delivery");
-  const [cols, setCols] = useState(INIT_COLS);
-  const [indivs, setIndivs] = useState(INIT_INDIVS);
-
-  const roles = [
-    { id: "delivery", label: "Rider",    icon: <Bike size={13} /> },
-    { id: "owner",    label: "Owner",    icon: <BriefcaseBusiness size={13} /> },
-    { id: "customer", label: "Customer", icon: <Users size={13} /> },
-  ];
-
+/* ============================= Primitives =============================== */
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px", padding: "1.5rem 1rem" }}>
-      <h2 className="sr-only">TiffinTrack UI — interactive mockup of rider, owner, and customer dashboards</h2>
+    <div className={`rounded-2xl border border-stone-200/70 bg-white p-5 shadow-sm shadow-stone-900/[0.03] ${className}`}>
+      {children}
+    </div>
+  );
+}
 
-      {/* Role switcher */}
-      <div style={{ display: "flex", gap: "8px", background: "var(--surface-1)", border: "0.5px solid var(--border)", borderRadius: "12px", padding: "6px" }}>
-        {roles.map(r => (
-          <button key={r.id} onClick={() => setRole(r.id)} style={{
-            display: "flex", alignItems: "center", gap: "6px",
-            padding: "7px 18px", borderRadius: "8px", fontSize: "13px", fontWeight: "500",
-            border: "none", cursor: "pointer",
-            background: role === r.id ? "var(--surface-2)" : "transparent",
-            color: role === r.id ? "var(--text-primary)" : "var(--text-muted)",
-            boxShadow: role === r.id ? "0 0 0 0.5px var(--border-strong)" : "none",
-          }}>
-            {r.icon}{r.label}
-          </button>
-        ))}
+function CardHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle?: string }) {
+  return (
+    <div className="flex items-start justify-between">
+      <div className="flex items-center gap-2">
+        <div className="grid h-8 w-8 place-items-center rounded-xl bg-amber-50">{icon}</div>
+        <div>
+          <p className="text-sm font-bold text-stone-900">{title}</p>
+          {subtitle && <p className="text-xs text-stone-500">{subtitle}</p>}
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Phone frame */}
-      <div style={{
-        width: "100%", maxWidth: "360px",
-        background: "#F9F9F7",
-        borderRadius: "2rem",
-        border: "0.5px solid var(--border-strong)",
-        overflow: "hidden",
-        height: "660px",
-        display: "flex",
-        flexDirection: "column",
-      }}>
-        {role === "delivery" && (
-          <DeliveryView cols={cols} indivs={indivs} setCols={setCols} setIndivs={setIndivs} />
-        )}
-        {role === "owner" && <OwnerView cols={cols} />}
-        {role === "customer" && <CustomerView />}
+function KpiCard({ label, value, icon: Icon, tone }: { label: string; value: number; icon: typeof Users; tone: "amber" | "green" | "stone"; }) {
+  const tones = {
+    amber: "bg-amber-50 text-amber-700",
+    green: "bg-green-50 text-green-700",
+    stone: "bg-stone-100 text-stone-700",
+  } as const;
+  return (
+    <div className="rounded-2xl border border-stone-200/70 bg-white p-3 shadow-sm shadow-stone-900/[0.03]">
+      <div className={`grid h-8 w-8 place-items-center rounded-xl ${tones[tone]}`}><Icon size={16} /></div>
+      <p className="mt-3 text-2xl font-bold tracking-tight text-stone-900">{value}</p>
+      <p className="text-[11px] font-medium text-stone-500">{label}</p>
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: Status }) {
+  const cfg = {
+    pending: { label: "Pending", cls: "bg-stone-100 text-stone-600" },
+    packed: { label: "Packed", cls: "bg-amber-100 text-amber-700" },
+    delivered: { label: "Delivered", cls: "bg-green-100 text-green-700" },
+  }[status];
+  return (
+    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${cfg.cls}`}>{cfg.label}</span>
+  );
+}
+
+function BottomNav({ items, active, onChange }: { items: { key: string; label: string; icon: typeof Home }[]; active: string; onChange: (k: string) => void; }) {
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-stone-200/70 bg-white/80 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-md items-center justify-around px-2 py-2">
+        {items.map((it) => {
+          const Icon = it.icon;
+          const active2 = it.key === active;
+          return (
+            <button key={it.key} onClick={() => onChange(it.key)}
+              className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl py-1.5 text-[10px] font-bold transition ${active2 ? "text-amber-600" : "text-stone-400"}`}>
+              <Icon size={20} strokeWidth={active2 ? 2.4 : 2} />
+              {it.label}
+            </button>
+          );
+        })}
       </div>
-
-      <p style={{ fontSize: "12px", color: "var(--text-muted)", textAlign: "center" }}>
-        Interactive · tap Packed / Delivered buttons in the Rider view to see state update live
-      </p>
     </div>
   );
 }

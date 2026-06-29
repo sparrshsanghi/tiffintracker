@@ -1338,6 +1338,7 @@ export default function App() {
           food: d.food,
           rate: d.rate,
           active: d.active,
+          group: d.group || "",
           deliveryOrder: d.deliveryOrder,
           resumeDate: d.resumeDate
         });
@@ -1604,12 +1605,33 @@ export default function App() {
   }
 
   async function advanceStatus(id) {
-    const updateDeliveryStatusFn = httpsCallable(functions, "updateDeliveryStatus");
+    const STATUS_NEXT = { pending: "out", out: "delivered" };
+    const NOTIF_MSG = { out: "Your tiffin is on the way! 🛵", delivered: "Your tiffin has been delivered. Enjoy your meal! 🍱" };
     try {
-      await updateDeliveryStatusFn({
-        pin: userPin,
-        customerId: String(id),
-        date: TODAY
+      const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(orderDocRef);
+        if (!snap.exists()) return;
+        const customerOrder = snap.data()[String(id)];
+        if (!customerOrder) return;
+        const next = STATUS_NEXT[customerOrder.status];
+        if (!next) return;
+        transaction.update(orderDocRef, {
+          [`${id}.status`]: next,
+          [`${id}.updatedBy`]: role || "manager",
+          [`${id}.updatedAt`]: new Date()
+        });
+        // Write notification
+        const c = cust.find((x) => String(x.id) === String(id));
+        if (c && c.phone) {
+          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "items"));
+          transaction.set(notifRef, {
+            message: NOTIF_MSG[next],
+            type: "delivery",
+            createdAt: new Date(),
+            read: false
+          });
+        }
       });
     } catch (e) {
       console.error(e);
@@ -1665,13 +1687,40 @@ export default function App() {
   async function addPayment(cid, rawAmt) {
     const amt = +rawAmt;
     if (!amt || isNaN(amt) || amt <= 0) return;
-    const confirmPaymentFn = httpsCallable(functions, "confirmPayment");
     try {
-      await confirmPaymentFn({
-        pin: userPin,
-        customerId: String(cid),
-        amount: amt,
-        date: new Date().toISOString()
+      const monthKey = CUR_MON;
+      const docId = `${cid}_${monthKey}`;
+      const payRef = doc(db, "businesses", BUSINESS_ID, "payments", docId);
+      const recordId = String(Date.now()) + "_" + String(Math.random()).slice(2, 8);
+      const dateLabel = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+      
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(payRef);
+        const existing = snap.exists() ? snap.data() : { totalPaid: 0, records: [] };
+        transaction.set(payRef, {
+          customerId: cid,
+          month: monthKey,
+          totalPaid: (existing.totalPaid || 0) + amt,
+          lastUpdated: new Date(),
+          records: [...(existing.records || []), {
+            id: recordId,
+            amount: amt,
+            date: dateLabel,
+            confirmed: true,
+            recordedAt: new Date()
+          }]
+        }, { merge: true });
+        // Notify customer
+        const c = cust.find((x) => String(x.id) === String(cid));
+        if (c && c.phone) {
+          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "items"));
+          transaction.set(notifRef, {
+            message: `Payment of ₹${amt} recorded for ${monthKey}. Total paid: ₹${(existing.totalPaid || 0) + amt}.`,
+            type: "payment",
+            createdAt: new Date(),
+            read: false
+          });
+        }
       });
     } catch (e) {
       console.error(e);
@@ -1765,13 +1814,11 @@ export default function App() {
   }
 
   async function updateDelivPin(newPin) {
-    const changePinFn = httpsCallable(functions, "changePIN");
     try {
-      await changePinFn({
-        currentPin: userPin,
-        newPin: newPin,
-        target: "delivery"
-      });
+      const newHash = await hashPIN(newPin);
+      if (newHash === delivPinHash) { alert("New PIN must be different."); return; }
+      const settingsRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
+      await updateDoc(settingsRef, { delivPinHash: newHash });
     } catch (e) {
       console.error(e);
       alert("Error changing delivery PIN: " + e.message);
@@ -1779,13 +1826,11 @@ export default function App() {
   }
 
   async function updateMgrPin(newPin) {
-    const changePinFn = httpsCallable(functions, "changePIN");
     try {
-      await changePinFn({
-        currentPin: userPin,
-        newPin: newPin,
-        target: "manager"
-      });
+      const newHash = await hashPIN(newPin);
+      if (newHash === mgrPinHash) { alert("New PIN must be different."); return; }
+      const settingsRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
+      await updateDoc(settingsRef, { mgrPinHash: newHash });
       setUserPin(newPin);
     } catch (e) {
       console.error(e);
