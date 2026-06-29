@@ -141,6 +141,7 @@ function AuthScreen(props) {
   var hdr=props.hdr, btn=props.btn;
   var value=props.value, onChange=props.onChange, error=props.error;
   var onBack=props.onBack, onSubmit=props.onSubmit, hint=props.hint, isPhone=props.isPhone;
+  var pinInputMode = props.pinInputMode || "text";
   return (
     <div className="min-h-screen bg-stone-50 flex flex-col" style={{fontFamily:"system-ui,sans-serif"}}>
       <div className={hdr + " text-white px-4 pt-12 pb-8 text-center"}>
@@ -152,12 +153,12 @@ function AuthScreen(props) {
         <input
           className={"w-full border-2 rounded-2xl px-4 py-4 text-xl font-bold text-center focus:outline-none " + (error ? "border-red-300 bg-red-50" : "border-stone-200 bg-white")}
           type={isPhone ? "tel" : "password"}
-          inputMode="numeric"
+          inputMode={isPhone ? "numeric" : pinInputMode}
           placeholder={isPhone ? "10-digit phone" : "Enter PIN"}
           value={value}
           onChange={function(e){onChange(e.target.value);}}
           onKeyDown={function(e){if(e.key==="Enter")onSubmit();}}
-          maxLength={isPhone ? 10 : 8}
+          maxLength={isPhone ? 10 : 12}
           autoFocus
         />
         {error && <p className="text-red-500 text-sm text-center mt-2 font-semibold">{error}</p>}
@@ -2107,14 +2108,14 @@ export default function App() {
     const mgrErrMsg = mgrErr
       ? (ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : (mgrLockMsg || "Wrong PIN. Try again."))
       : null;
-    return <AuthScreen icon="👔" title="Owner Access" subtitle="Enter your manager PIN" hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput} onChange={setMgrInput} error={mgrErrMsg} onBack={function () { setScreen("roleSelect"); setMgrErr(false); setMgrLockMsg(""); }} onSubmit={loginMgr} hint="Contact your IT setup person for initial PIN" isPhone={false} />;
+    return <AuthScreen icon="👔" title="Owner Access" subtitle="Enter your manager PIN" hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput} onChange={setMgrInput} error={mgrErrMsg} onBack={function () { setScreen("roleSelect"); setMgrErr(false); setMgrLockMsg(""); }} onSubmit={loginMgr} hint="Contact your IT setup person for initial PIN" isPhone={false} pinInputMode="text" />;
   }
   if (screen === "delivAuth") {
     const ls = checkLockout("tiffin_del_lockout");
     const delErrMsg = pinErr
       ? (ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : (delLockMsg || "Wrong PIN. Try again."))
       : null;
-    return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={delErrMsg} onBack={function () { setScreen("roleSelect"); setPinErr(false); setDelLockMsg(""); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} />;
+    return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={delErrMsg} onBack={function () { setScreen("roleSelect"); setPinErr(false); setDelLockMsg(""); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} pinInputMode="numeric" />;
   }
   if (screen === "custAuth") {
     const isLocked = Date.now() < custLockedUntil;
