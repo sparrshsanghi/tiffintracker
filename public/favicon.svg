@@ -1,0 +1,16 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M 50 4 A 46 46 0 0 0 50 96" stroke="#E65100" strokeWidth="5" fill="none" />
+  <path d="M 50 4 A 46 46 0 0 1 50 96" stroke="#2E7D32" strokeWidth="5" fill="none" />
+  <path d="M38 18 Q35 8 42 4 Q45 10 40 18" stroke="#E65100" strokeWidth="2" fill="none" />
+  <path d="M48 16 Q45 6 52 2 Q55 8 50 16" stroke="#E65100" strokeWidth="2" fill="none" />
+  <path d="M58 18 Q55 8 62 4 Q65 10 60 18" stroke="#E65100" strokeWidth="2" fill="none" />
+  <rect x="34" y="22" width="32" height="6" rx="3" fill="#E65100" />
+  <rect x="28" y="30" width="44" height="48" rx="4" fill="#E65100" />
+  <line x1="28" y1="36" x2="72" y2="36" stroke="#FFF" strokeWidth="1.5" />
+  <line x1="28" y1="46" x2="72" y2="46" stroke="#FFF" strokeWidth="1.5" />
+  <line x1="28" y1="62" x2="72" y2="62" stroke="#FFF" strokeWidth="1.5" />
+  <line x1="28" y1="72" x2="72" y2="72" stroke="#FFF" strokeWidth="1.5" />
+  <text x="50" y="57" fill="#FFF" fontSize="16" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle">माँ</text>
+  <path d="M 40 67 Q 50 71 60 67" stroke="#FFF" strokeWidth="1.5" fill="none" />
+  <path d="M 45 70 Q 50 72 55 70" stroke="#FFF" strokeWidth="1.5" fill="none" />
+</svg>

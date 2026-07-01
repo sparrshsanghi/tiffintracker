@@ -7,7 +7,6 @@ import {
 import { initializeApp } from "firebase/app";
 import {
   getFirestore,
-  connectFirestoreEmulator,
   collection,
   doc,
   onSnapshot,
@@ -23,10 +22,9 @@ import {
 import {
   getAuth,
   signInAnonymously,
-  onAuthStateChanged,
-  connectAuthEmulator
+  onAuthStateChanged
 } from "firebase/auth";
-import { DeliveryView, CustomerView, ManagerView as NewManagerView } from "./src/Views.jsx";
+import { DeliveryView, CustomerView, BrandLogo } from "./src/Views.jsx";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCcnx83mNfBNEuFX8GYVHehfO3veuKvSa8",
@@ -43,12 +41,6 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 
 const BUSINESS_ID = "default";
-
-// Connect to emulators if running locally
-if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-  connectFirestoreEmulator(db, "127.0.0.1", 8080);
-  connectAuthEmulator(auth, "http://127.0.0.1:9099");
-}
 
 // Browser-compatible SHA-256 hash helper
 async function hashPIN(pin) {
@@ -142,12 +134,19 @@ function AuthScreen(props) {
   var value=props.value, onChange=props.onChange, error=props.error;
   var onBack=props.onBack, onSubmit=props.onSubmit, hint=props.hint, isPhone=props.isPhone;
   var pinInputMode = props.pinInputMode || "text";
+  var disabled = props.disabled || false;
+  var disabledText = props.disabledText || "Connecting...";
   return (
     <div className="min-h-screen bg-stone-50 flex flex-col" style={{fontFamily:"system-ui,sans-serif"}}>
-      <div className={hdr + " text-white px-4 pt-12 pb-8 text-center"}>
-        <div className="text-5xl mb-3">{icon}</div>
-        <h1 className="text-xl font-black">{title}</h1>
-        <p className="text-white/70 text-sm mt-1">{subtitle}</p>
+      <div className={hdr + " text-white px-4 pt-8 pb-6 text-center flex flex-col items-center"}>
+        <BrandLogo className="w-16 h-16 mb-2" />
+        <h1 className="text-2xl font-black">Maa Sharda</h1>
+        <div className="bg-white/20 px-3 py-0.5 rounded-full text-[10px] font-bold mt-1 mb-4">अब पेट भरेगा, मन नहीं</div>
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">{icon}</span>
+          <h2 className="text-lg font-bold">{title}</h2>
+        </div>
+        <p className="text-white/80 text-sm mt-1">{subtitle}</p>
       </div>
       <div className="flex-1 p-6 max-w-sm mx-auto w-full pt-8">
         <input
@@ -160,11 +159,12 @@ function AuthScreen(props) {
           onKeyDown={function(e){if(e.key==="Enter")onSubmit();}}
           maxLength={isPhone ? 10 : 12}
           autoFocus
+          disabled={disabled}
         />
         {error && <p className="text-red-500 text-sm text-center mt-2 font-semibold">{error}</p>}
         {hint  && <p className="text-stone-400 text-xs text-center mt-2">{hint}</p>}
-        <button onClick={onSubmit} className={"mt-6 w-full py-4 text-white rounded-2xl font-black text-base " + btn}>
-          Continue →
+        <button onClick={onSubmit} disabled={disabled} className={"mt-6 w-full py-4 text-white rounded-2xl font-black text-base " + (disabled ? "bg-stone-300 cursor-not-allowed" : btn)}>
+          {disabled ? disabledText : "Continue →"}
         </button>
         <button onClick={onBack} className="mt-3 w-full py-3 text-stone-400 font-semibold text-sm">← Back</button>
       </div>
@@ -765,12 +765,14 @@ function ManagerView(props) {
   var setDelivPin=props.setDelivPin, mgrPin=props.mgrPin, setMgrPin=props.setMgrPin;
   var logout=props.logout;
 
-  var tabS=useState("dashboard"); var tab=tabS[0],setTab=tabS[1];
+  var tabS=useState(function(){ var h=window.location.hash.replace("#",""); return h.startsWith("form/") ? h.split("/")[1] : (h||"dashboard"); });
+  var tab=tabS[0], setTabState=tabS[1];
   var pmS=useState(curMonth); var payMonth=pmS[0],setPayMonth=pmS[1];
   var pfS=useState("all"); var payFilter=pfS[0],setPayFilter=pfS[1];
   var paS=useState({}); var payAmt=paS[0],setPayAmt=paS[1];
   var spS=useState({}); var showPart=spS[0],setShowPart=spS[1];
-  var sfS=useState(false); var showForm=sfS[0],setShowForm=sfS[1];
+  var sfS=useState(function(){ return window.location.hash.replace("#","").startsWith("form/"); });
+  var showForm=sfS[0], setShowFormState=sfS[1];
   var eiS=useState(null); var editId=eiS[0],setEditId=eiS[1];
   var fmS=useState({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:"", paused:false, pauseFrom:"", pauseTo:""}); var form=fmS[0],setForm=fmS[1];
   var srS=useState(""); var search=srS[0],setSearch=srS[1];
@@ -782,6 +784,24 @@ function ManagerView(props) {
   var wgS=useState(props.whatsappGroup||""); var wg=wgS[0],setWg=wgS[1];
   
   useEffect(function() { setWg(props.whatsappGroup||""); }, [props.whatsappGroup]);
+
+  useEffect(function() {
+    function onHash() {
+      var h = window.location.hash.replace("#", "");
+      if (h.startsWith("form/")) {
+        setShowFormState(true);
+        setTabState(h.split("/")[1] || "customers");
+      } else {
+        setShowFormState(false);
+        setTabState(h || "dashboard");
+      }
+    }
+    window.addEventListener("hashchange", onHash);
+    return function() { window.removeEventListener("hashchange", onHash); };
+  }, []);
+
+  function setTab(t) { window.location.hash = t; }
+  function setShowForm(v) { window.location.hash = v ? "form/" + tab : tab; }
 
   var pmStats = useMemo(function(){
     var active=customers.filter(function(c){return c.active&&c.rate>0;});
@@ -892,7 +912,7 @@ function ManagerView(props) {
       <div className="bg-orange-600 text-white px-4 pt-5 pb-4 shadow-lg">
         <div className="flex items-center justify-between max-w-lg mx-auto">
           <div>
-            <div className="flex items-center gap-2"><span className="text-2xl">🍱</span><span className="text-xl font-black">TiffinTrack</span></div>
+            <div className="flex items-center gap-2"><BrandLogo className="w-8 h-8" /><span className="text-xl font-black">Maa Sharda</span></div>
             <p className="text-orange-200 text-xs mt-0.5">{TODAY_STR}</p>
           </div>
           <div className="text-right">
@@ -1334,7 +1354,6 @@ export default function App() {
   const [notifs, setNotifs] = useState({});
   const [custPhone, setCustPhone] = useState("");
   const [whatsappGroup, setWhatsappGroup] = useState("");
-  const [legacyMode, setLegacyMode] = useState(false);
 
   const [mgrPinHash, setMgrPinHash] = useState("");
   const [delivPinHash, setDelivPinHash] = useState("");
@@ -1384,6 +1403,8 @@ export default function App() {
   // ─── Firebase Anonymous Auth ──────────────────────────────────────────────
   const [authReady, setAuthReady] = useState(false);
   const [firebaseUid, setFirebaseUid] = useState(null);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [customersReady, setCustomersReady] = useState(false);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
@@ -1408,7 +1429,7 @@ export default function App() {
   const sessionRestored = useRef(false);
 
   useEffect(() => {
-    if (!authReady || !mgrPinHash || !delivPinHash || sessionRestored.current) return;
+    if (!authReady || !settingsReady || !customersReady || !mgrPinHash || !delivPinHash || sessionRestored.current) return;
     sessionRestored.current = true;
 
     const savedRole = sessionStorage.getItem("tiffin_role");
@@ -1444,7 +1465,7 @@ export default function App() {
         }
       }
     })();
-  }, [authReady, mgrPinHash, delivPinHash, cust]);
+  }, [authReady, settingsReady, customersReady, mgrPinHash, delivPinHash, cust]);
 
   // ─── Real-time Sync ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1471,6 +1492,11 @@ export default function App() {
         });
       });
       setCust(list);
+      setCustomersReady(true);
+    }, (error) => {
+      console.error("Customer sync failed:", error);
+      setCust(SEED_C);
+      setCustomersReady(true);
     });
 
     // 2. Sync Today's Orders
@@ -1521,19 +1547,32 @@ export default function App() {
     const unsubscribeSettings = onSnapshot(settingsDocRef, async (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        setMgrPinHash(data.mgrPinHash);
-        setDelivPinHash(data.delivPinHash);
+        setMgrPinHash(data.mgrPinHash || "");
+        setDelivPinHash(data.delivPinHash || "");
         setWhatsappGroup(data.whatsappGroup || "");
+        setSettingsReady(Boolean(data.mgrPinHash && data.delivPinHash));
       } else {
         const defaultMgrHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
         const defaultDelivHash = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4";
-        await setDoc(settingsDocRef, {
-          mgrPinHash: defaultMgrHash,
-          delivPinHash: defaultDelivHash,
-          businessName: "Maa Sharda Tiffin",
-          createdAt: new Date()
-        });
+        try {
+          await setDoc(settingsDocRef, {
+            mgrPinHash: defaultMgrHash,
+            delivPinHash: defaultDelivHash,
+            businessName: "Maa Sharda",
+            createdAt: new Date()
+          });
+        } catch (error) {
+          console.error("Settings seed failed:", error);
+        }
+        setMgrPinHash(defaultMgrHash);
+        setDelivPinHash(defaultDelivHash);
+        setSettingsReady(true);
       }
+    }, (error) => {
+      console.error("Settings sync failed:", error);
+      setMgrPinHash("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
+      setDelivPinHash("03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4");
+      setSettingsReady(true);
     });
 
     return () => {
@@ -2077,11 +2116,11 @@ export default function App() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col items-center justify-center p-6" style={{ fontFamily: "system-ui,sans-serif" }}>
         <div className="w-full max-w-sm">
-          <div className="text-center mb-10">
-            <div className="text-7xl mb-4">🍱</div>
-            <h1 className="text-3xl font-black text-stone-800">Maa Sharda Tiffin</h1>
-            <p className="text-stone-500 mt-1 text-sm">Fresh home-cooked meals, delivered daily</p>
-            <p className="text-stone-400 mt-3 text-xs font-semibold uppercase tracking-wider">Select your role to continue</p>
+          <div className="text-center mb-10 flex flex-col items-center">
+            <BrandLogo className="w-24 h-24 mb-3" />
+            <h1 className="text-4xl font-black text-stone-800 tracking-tight">Maa Sharda</h1>
+            <div className="bg-orange-600 text-white rounded-full px-4 py-1.5 inline-block mt-3 font-bold text-sm shadow-sm">अब पेट भरेगा, मन नहीं</div>
+            <p className="text-stone-400 mt-6 text-xs font-semibold uppercase tracking-wider">Select your role to continue</p>
           </div>
           <div className="space-y-3">
             {[
@@ -2144,19 +2183,10 @@ export default function App() {
   const onResetDay = () => setShowResetConfirm(true);
 
   if (role === "manager") {
-    if (legacyMode) {
-      return (
-        <div>
-          {resetConfirmModal}
-          <button onClick={() => setLegacyMode(false)} className="w-full bg-amber-500 text-white font-bold py-2 shadow-md">← Back to Modern Dashboard</button>
-          <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} delivPin={delivPin} setDelivPin={updateDelivPin} mgrPin={mgrPin} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} logout={logout} />
-        </div>
-      );
-    }
     return (
       <div>
         {resetConfirmModal}
-        <NewManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} stats={stats} payStats={payStats} logout={logout} openLegacy={() => setLegacyMode(true)} resetDay={onResetDay} />
+        <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} delivPin={delivPin} setDelivPin={updateDelivPin} mgrPin={mgrPin} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} logout={logout} />
       </div>
     );
   }

@@ -12,6 +12,27 @@ const STATUS = {
   delivered: { label: "Delivered", bg: "bg-green-100", text: "text-green-800", dot: "bg-green-500" },
 };
 
+export function BrandLogo({ className = "w-24 h-24" }) {
+  return (
+    <svg viewBox="0 0 100 100" className={className} xmlns="http://www.w3.org/2000/svg">
+      <path d="M 50 4 A 46 46 0 0 0 50 96" stroke="#E65100" strokeWidth="5" fill="none" />
+      <path d="M 50 4 A 46 46 0 0 1 50 96" stroke="#2E7D32" strokeWidth="5" fill="none" />
+      <path d="M38 18 Q35 8 42 4 Q45 10 40 18" stroke="#E65100" strokeWidth="2" fill="none" />
+      <path d="M48 16 Q45 6 52 2 Q55 8 50 16" stroke="#E65100" strokeWidth="2" fill="none" />
+      <path d="M58 18 Q55 8 62 4 Q65 10 60 18" stroke="#E65100" strokeWidth="2" fill="none" />
+      <rect x="34" y="22" width="32" height="6" rx="3" fill="#E65100" />
+      <rect x="28" y="30" width="44" height="48" rx="4" fill="#E65100" />
+      <line x1="28" y1="36" x2="72" y2="36" stroke="#FFF" strokeWidth="1.5" />
+      <line x1="28" y1="46" x2="72" y2="46" stroke="#FFF" strokeWidth="1.5" />
+      <line x1="28" y1="62" x2="72" y2="62" stroke="#FFF" strokeWidth="1.5" />
+      <line x1="28" y1="72" x2="72" y2="72" stroke="#FFF" strokeWidth="1.5" />
+      <text x="50" y="57" fill="#FFF" fontSize="16" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle">माँ</text>
+      <path d="M 40 67 Q 50 71 60 67" stroke="#FFF" strokeWidth="1.5" fill="none" />
+      <path d="M 45 70 Q 50 72 55 70" stroke="#FFF" strokeWidth="1.5" fill="none" />
+    </svg>
+  );
+}
+
 function getDefaultFood(customFood) {
   if (customFood && customFood.trim().length > 0) return customFood;
   const d = new Date();
@@ -268,7 +289,7 @@ export function CustomerView(props) {
         <button onClick={logout} className="absolute top-5 right-4 text-xs font-bold text-amber-200 border border-amber-400 px-2 py-1 rounded-lg">Logout</button>
         <p className="text-amber-100 text-sm">Welcome back</p>
         <p className="text-white text-2xl font-black mt-0.5">Hi, {customer.name.split(" ")[0]}!</p>
-        <p className="text-amber-200 text-xs mt-0.5 truncate pr-16">{customer.group || "TiffinTrack"} · {customer.address}</p>
+        <p className="text-amber-200 text-xs mt-0.5 truncate pr-16">{customer.group || "Maa Sharda"} · {customer.address}</p>
       </div>
 
       <div className="bg-white border-b border-stone-100 flex flex-shrink-0 shadow-sm">
@@ -444,207 +465,6 @@ export function CustomerView(props) {
              </div>
            )
          )}
-      </div>
-    </div>
-  );
-}
-
-export function ManagerView(props) {
-  var customers=props.customers, orders=props.orders, stats=props.stats, payStats=props.payStats;
-  var logout=props.logout;
-  const [tab, setTab] = useState("overview");
-  const [exp, setExp] = useState({});
-  const [searchQuery, setSearchQuery] = useState("");
-
-  var groups = {};
-  var ungrouped = [];
-  const lowerQ = searchQuery.toLowerCase();
-  customers.filter(c => c.active).forEach(function(c){
-    if (searchQuery && !(
-      c.name.toLowerCase().includes(lowerQ) ||
-      c.phone.includes(searchQuery) ||
-      (c.address || "").toLowerCase().includes(lowerQ) ||
-      (c.group || "").toLowerCase().includes(lowerQ)
-    )) return;
-    var g = (c.group || "").trim();
-    if(g) {
-      if(!groups[g]) groups[g] = [];
-      groups[g].push(c);
-    } else {
-      ungrouped.push(c);
-    }
-  });
-
-  return (
-    <div className="flex flex-col min-h-screen bg-stone-50" style={{fontFamily:"'Inter', system-ui, sans-serif"}}>
-      <div className="bg-white border-b border-stone-100 px-3 py-2 flex gap-1 flex-shrink-0 sticky top-0 z-10">
-        {["overview", "customers", "payments", "menu"].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 text-xs font-bold py-2 rounded-lg capitalize transition-all ${tab === t ? "bg-stone-900 text-white" : "text-stone-500"}`}>
-            {t}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-3 pt-4 pb-6 space-y-3 relative">
-        {tab === "overview" && (
-          <>
-            <div className="flex justify-between items-center mb-1">
-               <SectionLabel>Today's Overview</SectionLabel>
-               <button onClick={logout} className="text-[10px] bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full border border-stone-200">Logout</button>
-            </div>
-            
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { v: stats.total, l: "Customers", icon: <Users size={15} className="text-stone-500" />, bg: "bg-stone-50 border-stone-100" },
-                { v: stats.pending,  l: "Pending",   icon: <AlertCircle size={15} className="text-red-500" />, bg: "bg-red-50 border-red-100" },
-                { v: stats.delivered,  l: "Delivered", icon: <CheckCircle2 size={15} className="text-green-500" />, bg: "bg-green-50 border-green-100" },
-              ].map(s => (
-                <div key={s.l} className={`rounded-xl p-3 text-center border shadow-sm ${s.bg}`}>
-                  <div className="flex justify-center mb-1.5">{s.icon}</div>
-                  <p className="text-2xl font-black text-stone-900 leading-none">{s.v}</p>
-                  <p className="text-[10px] uppercase tracking-wide font-bold text-stone-400 mt-1">{s.l}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200 shadow-sm mt-4">
-              <p className="text-xs font-bold text-amber-900 mb-4 uppercase tracking-wider">Colony Progress Today</p>
-              {Object.keys(groups).map(gName => {
-                const cList = groups[gName];
-                const cIds = cList.map(c => c.id);
-                const gOrders = orders.filter(o => cIds.includes(o.id));
-                const done = gOrders.filter(o => o.status === "delivered").length;
-                const pct = cList.length > 0 ? Math.round((done / cList.length) * 100) : 0;
-                return (
-                  <div key={gName} className="mb-3 last:mb-0">
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="font-bold text-amber-900">{gName}</span>
-                      <span className="font-bold text-amber-700">{done}/{cList.length}</span>
-                    </div>
-                    <div className="h-1.5 bg-amber-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-amber-500 rounded-full transition-all duration-700" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm mt-4">
-              <p className="text-xs text-stone-400 font-bold uppercase tracking-wider mb-3">Revenue (This Month)</p>
-              <div className="flex justify-between items-end">
-                <div><p className="text-3xl font-black text-stone-900">₹{payStats.collected.toLocaleString()}</p><p className="text-xs text-stone-400 font-semibold mt-0.5">collected of ₹{payStats.due.toLocaleString()}</p></div>
-                <div className="text-right"><p className="text-xl font-black text-red-500">₹{(payStats.due - payStats.collected).toLocaleString()}</p><p className="text-xs text-red-400 font-semibold mt-0.5">pending</p></div>
-              </div>
-            </div>
-            
-            <p className="text-xs text-center text-stone-400 mt-6 font-medium">To manage menus, customers and settings,<br/>use the tabs above.</p>
-          </>
-        )}
-
-        {tab === "customers" && (
-          <>
-            <div className="flex gap-2">
-              {[
-                { v: Object.keys(groups).length, l: "Colonies",       cl: "bg-amber-50 border-amber-200 text-amber-900" },
-                { v: Object.values(groups).reduce((acc, g) => acc + g.length, 0), l: "Colony members", cl: "bg-stone-50 border-stone-200 text-stone-900" },
-                { v: ungrouped.length, l: "Individual",     cl: "bg-stone-50 border-stone-200 text-stone-900" },
-              ].map(s => (
-                <div key={s.l} className={`flex-1 rounded-xl px-2 py-3 text-center border shadow-sm ${s.cl.split(" ").slice(0,2).join(" ")}`}>
-                  <p className={`text-2xl font-black ${s.cl.split(" ")[2]}`}>{s.v}</p>
-                  <p className="text-[10px] font-bold uppercase text-stone-400 tracking-wide mt-1">{s.l}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4">
-               <input
-                 type="text"
-                 placeholder="🔍 Search by name, phone, or area..."
-                 value={searchQuery}
-                 onChange={e => setSearchQuery(e.target.value)}
-                 className="w-full px-4 py-3 bg-white border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all shadow-sm"
-               />
-            </div>
-
-            {Object.keys(groups).length === 0 && ungrouped.length === 0 && (
-              <div className="text-center py-10 text-stone-400">
-                <p className="font-semibold">No customers found.</p>
-              </div>
-            )}
-
-            {Object.keys(groups).length > 0 && (
-              <div className="mt-4">
-                 <SectionLabel>Colonies</SectionLabel>
-              </div>
-            )}
-
-            {Object.keys(groups).map(gName => {
-              const col = groups[gName];
-              return (
-              <div key={gName} className="rounded-2xl overflow-hidden border-2 border-amber-200 mb-3 shadow-sm">
-                <button onClick={() => setExp(e => ({ ...e, [gName]: !e[gName] }))}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-3 bg-amber-50 text-left">
-                  <Building2 size={18} className="text-amber-700 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-stone-800 text-sm">{gName}</p>
-                    <p className="text-xs text-stone-400 truncate">{col.length} members · {col[0].address.split(",").slice(1).join(",").trim()}</p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {exp[gName] ? <ChevronUp size={14} className="text-stone-400" /> : <ChevronDown size={14} className="text-stone-400" />}
-                  </div>
-                </button>
-
-                {exp[gName] && (
-                  <div className="bg-white">
-                    <div className="px-3.5 py-1.5 bg-stone-50 border-b border-stone-100 flex gap-3">
-                      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest w-14">House</p>
-                      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest flex-1">Customer</p>
-                      <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Food</p>
-                    </div>
-                    {col.map(m => (
-                      <div key={m.id} className="flex items-center gap-3 px-3.5 py-2.5 border-b border-stone-50 last:border-0">
-                        <span className="text-xs font-black text-amber-900 font-mono bg-amber-50 px-2 py-0.5 rounded w-14 text-center flex-shrink-0 truncate">{m.address.split(",")[0].trim() || "-"}</span>
-                        <p className="text-sm font-medium text-stone-800 flex-1 truncate">{m.name}</p>
-                        <p className="text-[11px] text-stone-500 truncate max-w-[80px]">{getDefaultFood(m.food)}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )})}
-
-            {ungrouped.length > 0 && (
-              <div className="mt-4">
-                 <SectionLabel>Individual</SectionLabel>
-              </div>
-            )}
-
-            {ungrouped.map(p => (
-              <div key={p.id} className="bg-white rounded-xl border border-stone-200 px-3.5 py-3 flex items-center gap-2.5 mb-2 shadow-sm">
-                <div className="w-9 h-9 rounded-xl bg-stone-100 flex items-center justify-center flex-shrink-0">
-                  <Home size={15} className="text-stone-500" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-stone-800">{p.name}</p>
-                  <p className="text-xs text-stone-400 flex items-center gap-1 truncate"><MapPin size={10} className="flex-shrink-0"/>{p.address}</p>
-                </div>
-              </div>
-            ))}
-            
-            <button onClick={props.openLegacy} className="w-full text-xs font-bold bg-stone-200 text-stone-600 py-3 rounded-xl mt-6 active:scale-95 transition-transform shadow-sm">
-              Enter Edit Mode (Add/Edit Customers)
-            </button>
-          </>
-        )}
-
-        {tab === "payments" && (
-           <div className="text-center py-16 text-stone-400"><p className="font-semibold">Payments view mapped to real app soon.</p></div>
-        )}
-        
-        {tab === "menu" && (
-           <div className="text-center py-16 text-stone-400"><p className="font-semibold">Menu view mapped to real app soon.</p></div>
-        )}
       </div>
     </div>
   );
