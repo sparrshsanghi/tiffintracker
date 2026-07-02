@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import {
   MapPin, Package, CheckCircle2, ChevronDown, ChevronUp,
   Phone, Bell, CreditCard, Home, Building2, UtensilsCrossed,
-  Users, AlertCircle, Bike, BriefcaseBusiness
+  Users, AlertCircle
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -19,12 +19,13 @@ import {
   getDocs,
   getDoc
 } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import {
   getAuth,
   signInAnonymously,
   onAuthStateChanged
 } from "firebase/auth";
-import { DeliveryView, CustomerView, BrandLogo } from "./src/Views.jsx";
+import { CustomerView, BrandLogo } from "./src/Views.jsx";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCcnx83mNfBNEuFX8GYVHehfO3veuKvSa8",
@@ -39,6 +40,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const fns = getFunctions(app);
+const startOnboardingCallable = httpsCallable(fns, "startOnboarding");
+const saveOnboardingDraftCallable = httpsCallable(fns, "saveOnboardingDraft");
+const confirmOnboardingCallable = httpsCallable(fns, "confirmOnboarding");
+const listOnboardingQueueCallable = httpsCallable(fns, "listOnboardingQueue");
+const resolveOnboardingApprovalCallable = httpsCallable(fns, "resolveOnboardingApproval");
 
 const BUSINESS_ID = "default";
 
@@ -167,6 +174,244 @@ function AuthScreen(props) {
           {disabled ? disabledText : "Continue →"}
         </button>
         <button onClick={onBack} className="mt-3 w-full py-3 text-stone-400 font-semibold text-sm">← Back</button>
+      </div>
+    </div>
+  );
+}
+
+function OnboardingScreen(props) {
+  const initialPhone = props.phone || "";
+  const onClose = props.onClose;
+  const [sessionId, setSessionId] = useState(sessionStorage.getItem("tiffin_onboard_session") || "");
+  const [draft, setDraft] = useState(() => ({
+    name: "",
+    phone: initialPhone,
+    address: "",
+    group: "",
+    plan: "daily",
+    food: "",
+    rate: "",
+    notes: "",
+  }));
+  const [messages, setMessages] = useState([
+    { role: "assistant", text: "Tell me your name, phone, address, meal plan, food order, and monthly rate. You can type naturally or use voice." },
+  ]);
+  const [input, setInput] = useState("");
+  const [status, setStatus] = useState("collecting");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    setDraft((prev) => Object.assign({}, prev, { phone: initialPhone || prev.phone }));
+  }, [initialPhone]);
+
+  useEffect(() => {
+    try {
+      const savedDraft = sessionStorage.getItem("tiffin_onboard_draft");
+      if (savedDraft) {
+        const parsed = JSON.parse(savedDraft);
+        setDraft((prev) => Object.assign({}, prev, parsed, { phone: initialPhone || parsed.phone || prev.phone }));
+      }
+    } catch (error) {
+      console.error("Onboarding draft restore failed:", error);
+    }
+  }, [initialPhone]);
+
+  useEffect(() => {
+    sessionStorage.setItem("tiffin_onboard_draft", JSON.stringify(draft));
+  }, [draft]);
+
+  useEffect(() => {
+    setVoiceSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+  }, []);
+
+  function syncDraft(nextDraft) {
+    setDraft((prev) => Object.assign({}, prev, nextDraft));
+  }
+
+  function summarize(nextDraft) {
+    return [
+      nextDraft.name ? `Name: ${nextDraft.name}` : null,
+      nextDraft.phone ? `Phone: ${nextDraft.phone}` : null,
+      nextDraft.address ? `Address: ${nextDraft.address}` : null,
+      nextDraft.group ? `Group: ${nextDraft.group}` : null,
+      nextDraft.plan ? `Plan: ${nextDraft.plan}` : null,
+      nextDraft.food ? `Food: ${nextDraft.food}` : null,
+      nextDraft.rate ? `Rate: ₹${nextDraft.rate}` : null,
+      nextDraft.notes ? `Notes: ${nextDraft.notes}` : null,
+    ].filter(Boolean).join("\n");
+  }
+
+  async function runExtraction(text) {
+    if (!text.trim()) return;
+    setBusy(true);
+    setError("");
+    setMessages((prev) => prev.concat([{ role: "user", text }]))
+    try {
+      const result = await startOnboardingCallable({
+        text,
+        sessionId: sessionId || undefined,
+        source: voiceSupported && recognitionRef.current ? "voice" : "chat",
+      });
+      const data = result.data || {};
+      if (data.sessionId) {
+        setSessionId(data.sessionId);
+        sessionStorage.setItem("tiffin_onboard_session", data.sessionId);
+      }
+      if (data.draft) {
+        syncDraft(data.draft);
+      }
+      setStatus(data.status || "collecting");
+      const nextMissing = Array.isArray(data.missingFields) ? data.missingFields : [];
+      setMessages((prev) => prev.concat([{ role: "assistant", text: nextMissing.length > 0 ? `I still need: ${nextMissing.join(", ")}.` : "Everything looks ready. Review the summary and confirm to submit for approval." }]));
+    } catch (err) {
+      setError(err?.message || "Could not process onboarding message.");
+      setMessages((prev) => prev.concat([{ role: "assistant", text: "I could not process that. Please try again or fill the fields manually." }]));
+    } finally {
+      setBusy(false);
+      setInput("");
+    }
+  }
+
+  async function ensureSession() {
+    if (sessionId) {
+      return sessionId;
+    }
+    const seedText = summarize(draft) || `Customer onboarding for ${initialPhone || draft.phone || "unknown phone"}`;
+    const result = await startOnboardingCallable({
+      text: seedText,
+      source: "chat",
+    });
+    const data = result.data || {};
+    if (data.sessionId) {
+      setSessionId(data.sessionId);
+      sessionStorage.setItem("tiffin_onboard_session", data.sessionId);
+    }
+    if (data.draft) {
+      syncDraft(data.draft);
+    }
+    setStatus(data.status || "collecting");
+    return data.sessionId || sessionId;
+  }
+
+  async function saveDraft() {
+    setBusy(true);
+    try {
+      const currentSessionId = await ensureSession();
+      const result = await saveOnboardingDraftCallable({ sessionId: currentSessionId, draft });
+      const data = result.data || {};
+      if (data.draft) syncDraft(data.draft);
+      setStatus(data.status || "collecting");
+      setMessages((prev) => prev.concat([{ role: "assistant", text: data.missingFields && data.missingFields.length > 0 ? `Saved. Still needed: ${data.missingFields.join(", ")}.` : "Draft saved and ready for confirmation." }]));
+    } catch (err) {
+      setError(err?.message || "Could not save draft.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitForApproval() {
+    setBusy(true);
+    setError("");
+    try {
+      const currentSessionId = await ensureSession();
+      const result = await confirmOnboardingCallable({ sessionId: currentSessionId, draft });
+      const data = result.data || {};
+      setStatus(data.status || "pending_manager_approval");
+      setMessages((prev) => prev.concat([{ role: "assistant", text: `Submitted for manager approval. ${data.summary ? "\n" + data.summary : ""}` }]));
+    } catch (err) {
+      setError(err?.message || "Could not submit onboarding.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleVoice() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-IN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = function(event) {
+      const text = event.results[0][0].transcript;
+      setInput(text);
+      recognitionRef.current = null;
+    };
+    recognition.onend = function() { recognitionRef.current = null; };
+    recognitionRef.current = recognition;
+    recognition.start();
+  }
+
+  const ready = draft.name && draft.phone && draft.address && draft.plan && draft.food && Number(draft.rate) > 0;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col" style={{ fontFamily: "system-ui,sans-serif" }}>
+      <div className="bg-orange-600 text-white px-4 pt-5 pb-4 shadow-lg">
+        <div className="max-w-lg mx-auto flex items-center justify-between">
+          <div>
+            <p className="text-orange-200 text-xs font-semibold uppercase tracking-wider">Customer onboarding</p>
+            <p className="text-2xl font-black mt-1">Tell us your details</p>
+          </div>
+          <button onClick={onClose} className="text-xs text-orange-100 border border-orange-300/40 px-3 py-1.5 rounded-full">Exit</button>
+        </div>
+      </div>
+      <div className="flex-1 p-4 max-w-lg mx-auto w-full space-y-4 pb-8">
+        <div className="bg-white rounded-3xl shadow-sm border border-stone-100 p-4 space-y-3">
+          {messages.map((message, index) => (
+            <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
+              <div className={"inline-block max-w-[92%] rounded-2xl px-4 py-3 text-sm font-medium whitespace-pre-wrap " + (message.role === "user" ? "bg-orange-600 text-white" : "bg-stone-100 text-stone-700")}>{message.text}</div>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <input className={INP + " flex-1"} placeholder="Type one detail or a full message" value={input} onChange={function(e){setInput(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){runExtraction(input);}}} />
+            <button onClick={toggleVoice} disabled={!voiceSupported} className={"px-4 rounded-xl font-black text-sm border " + (voiceSupported ? "bg-white text-stone-700 border-stone-200" : "bg-stone-100 text-stone-300 border-stone-100")}>🎙</button>
+            <button onClick={function(){runExtraction(input);}} disabled={busy || !input.trim()} className="px-4 rounded-xl font-black text-sm bg-orange-600 text-white">Send</button>
+          </div>
+          {error && <p className="text-xs text-red-600 font-semibold">{error}</p>}
+        </div>
+
+        <div className="bg-white rounded-3xl shadow-sm border border-stone-100 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">Draft profile</p>
+              <p className="text-sm text-stone-500">Conversation state is saved as you go.</p>
+            </div>
+            <span className={"text-xs font-black px-3 py-1.5 rounded-full " + (ready ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{ready ? "Ready" : status}</span>
+          </div>
+          {[
+            ["name", "Name"],
+            ["phone", "Phone"],
+            ["address", "Address"],
+            ["group", "Group / Building"],
+            ["plan", "Plan"],
+            ["food", "Food"],
+            ["rate", "Monthly rate"],
+            ["notes", "Notes"],
+          ].map(function(field) {
+            var key = field[0];
+            var label = field[1];
+            return (
+              <div key={key}>
+                <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">{label}</label>
+                <input className={INP + " mt-1"} value={draft[key] || ""} onChange={function(e){syncDraft({ [key]: e.target.value });}} />
+              </div>
+            );
+          })}
+          <div className="flex gap-2">
+            <button onClick={saveDraft} disabled={busy || !sessionId} className="flex-1 py-3 rounded-2xl bg-stone-100 text-stone-700 font-black">Save draft</button>
+            <button onClick={submitForApproval} disabled={busy || !ready || !sessionId} className="flex-1 py-3 rounded-2xl bg-green-600 text-white font-black">Confirm & send</button>
+          </div>
+          {status === "pending_manager_approval" && <div className="rounded-2xl bg-green-50 border border-green-100 p-3 text-sm text-green-700 font-semibold">Submitted. A manager will review this profile next.</div>}
+          <pre className="text-xs text-stone-500 bg-stone-50 rounded-2xl p-3 whitespace-pre-wrap overflow-x-auto">{summarize(draft) || "No draft yet."}</pre>
+        </div>
       </div>
     </div>
   );
@@ -335,222 +580,6 @@ function MenuPlanner(props) {
         <button onClick={copyLastWeek} className="w-full py-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-2xl text-sm font-bold hover:bg-blue-100">
           Copy Menu from Last Week
         </button>
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// DELIVERY VIEW
-// ══════════════════════════════════════════════════════════════════════════════
-function OldDeliveryView(props) {
-  var orders=props.orders, customers=props.customers, advance=props.advance;
-  var advanceGroup=props.advanceGroup, setRiderNext=props.setRiderNext, resetDay=props.resetDay;
-  var logout=props.logout, stats=props.stats;
-
-  var groups = {};
-  var ungrouped = [];
-  var totalTiffins = 0;
-  orders.forEach(function(order){
-    var c = customers.find(function(x){return x.id===order.id;});
-    if(!c) return;
-    totalTiffins++;
-    var g = (c.group || "").trim();
-    if(g) {
-      if(!groups[g]) groups[g] = [];
-      groups[g].push({order: order, customer: c});
-    } else {
-      ungrouped.push({order: order, customer: c});
-    }
-  });
-
-  var groupKeys = Object.keys(groups).sort(function(a, b) {
-    var minA = Math.min(...groups[a].map(o => (o.order.riderNextFlag ? -1000 : (o.customer.deliveryOrder || 999))));
-    var minB = Math.min(...groups[b].map(o => (o.order.riderNextFlag ? -1000 : (o.customer.deliveryOrder || 999))));
-    return minA - minB;
-  });
-
-  ungrouped.sort(function(a, b) {
-    var oa = a.order.riderNextFlag ? -1000 : (a.customer.deliveryOrder || 999);
-    var ob = b.order.riderNextFlag ? -1000 : (b.customer.deliveryOrder || 999);
-    return oa - ob;
-  });
-
-  var numGroups = groupKeys.length;
-  
-  var groupsDelivered = 0;
-  var groupsTransit = 0;
-  var groupsPending = 0;
-  
-  groupKeys.forEach(function(g) {
-    var gOrders = groups[g];
-    var allDelivered = gOrders.every(function(o){ return o.order.status === "delivered"; });
-    var anyTransit = gOrders.some(function(o){ return o.order.status === "out"; });
-    if(allDelivered) groupsDelivered++;
-    else if(anyTransit) groupsTransit++;
-    else groupsPending++;
-  });
-
-  var dayName = new Date().toLocaleDateString("en-US", { weekday: 'long' }).toUpperCase();
-
-  return (
-    <div className="min-h-screen bg-[#FDFDFD] pb-10" style={{fontFamily:"'Inter', system-ui, sans-serif"}}>
-      <div className="max-w-md mx-auto p-4 pt-8">
-        
-        {/* Header */}
-        <p className="text-[11px] font-bold text-stone-400 tracking-widest">{dayName} &middot; {totalTiffins} TIFFINS &middot; {numGroups} BUILDINGS</p>
-        <h1 className="text-3xl font-black text-stone-200 mt-1 mb-6">
-          Group by <span className="text-amber-400">building.</span>
-        </h1>
-        
-        {/* Summary Card */}
-        <div className="bg-[#1C1C1C] rounded-[24px] p-5 flex items-center gap-5 mb-4 shadow-xl shadow-stone-200/50">
-          <div className="relative w-[60px] h-[60px] flex items-center justify-center shrink-0">
-            <svg className="absolute inset-0 w-full h-full rotate-[-90deg]" viewBox="0 0 36 36">
-              <path className="text-stone-700" strokeWidth="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-              <path className="text-amber-400 transition-all duration-500" strokeDasharray={(numGroups>0?(groupsDelivered/numGroups)*100:0) + ", 100"} strokeWidth="3" stroke="currentColor" fill="none" strokeLinecap="round" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-            </svg>
-            <div className="text-center flex flex-col">
-              <span className="text-white font-bold leading-none text-sm">{groupsDelivered}/{numGroups}</span>
-              <span className="text-[9px] text-stone-400 font-semibold mt-0.5">groups</span>
-            </div>
-          </div>
-          <div className="flex-1">
-            <h2 className="text-white font-bold text-lg leading-tight mb-1">{groupsDelivered} groups delivered</h2>
-            <p className="text-stone-400 text-xs mb-3">{groupsTransit} in transit &middot; {groupsPending} pending</p>
-            <div className="flex gap-2">
-              <span className="bg-amber-500/20 text-amber-500 text-[10px] font-bold px-3 py-1.5 rounded-lg border border-amber-500/10">{stats.out} out for delivery</span>
-              <span className="bg-stone-800 text-stone-400 text-[10px] font-bold px-3 py-1.5 rounded-lg">{totalTiffins} tiffins</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-2 bg-stone-100 p-1.5 rounded-2xl mb-6">
-          <button className="flex-1 py-2 rounded-xl text-xs font-bold text-stone-400 flex items-center justify-center gap-2"><span className="opacity-50">&#9871;</span> Pack</button>
-          <button className="flex-1 py-2 rounded-xl text-xs font-bold text-stone-400 flex items-center justify-center gap-2"><span className="opacity-50">&#9871;</span> Dispatch</button>
-          <button className="flex-1 py-2 rounded-xl text-xs font-bold text-stone-800 bg-white shadow-sm flex items-center justify-center gap-2"><span className="text-stone-300">&#9871;</span> Route</button>
-        </div>
-
-        {/* Group Cards */}
-        <div className="space-y-4">
-          {groupKeys.map(function(gName, idx) {
-            var gOrders = groups[gName];
-            var address = gOrders[0].customer.address;
-            var allDelivered = gOrders.every(function(o){ return o.order.status === "delivered"; });
-            var anyTransit = gOrders.some(function(o){ return o.order.status === "out"; });
-            
-            var stdCount = gOrders.filter(function(o){ return (o.customer.food||"").toLowerCase().includes("standard"); }).length;
-            var jainCount = gOrders.filter(function(o){ return (o.customer.food||"").toLowerCase().includes("jain"); }).length;
-            var dietCount = gOrders.filter(function(o){ return (o.customer.food||"").toLowerCase().includes("diet"); }).length;
-            var regularCount = gOrders.length - stdCount - jainCount - dietCount;
-
-            var advanceIds = gOrders.filter(function(o){ return o.order.status !== "delivered"; }).map(function(o){ return o.order.id; });
-            var nextAction = anyTransit ? "Deliver All \u2705" : "Pick Up \ud83d\udeb4";
-
-            return (
-              <div key={gName} className={"bg-white rounded-[24px] border border-stone-100 p-5 shadow-sm " + (allDelivered?"opacity-60 grayscale-[50%]":"")}>
-                <p className="text-[10px] font-extrabold text-stone-400 tracking-wider uppercase mb-1">STOP {idx+1} OF {numGroups}</p>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-lg font-black text-stone-800 leading-tight">{gName}</h3>
-                    <p className="text-xs text-stone-400 mt-0.5">{address}</p>
-                  </div>
-                  <a href={"https://www.google.com/maps/dir/?api=1&destination="+encodeURIComponent(gName+" "+address)} target="_blank" rel="noreferrer" className="w-10 h-10 bg-stone-50 rounded-full flex items-center justify-center text-lg shadow-sm border border-stone-100 active:scale-95 transition-transform" title="Navigate">\ud83d\uddfa\ufe0f</a>
-                </div>
-                
-                {/* Stats Row */}
-                <div className="flex flex-wrap gap-2 mt-4 text-[10px] font-bold text-stone-600">
-                  <span className="bg-stone-100 px-2.5 py-1.5 rounded-md flex items-center gap-1.5"><span className="text-stone-400">\ud83c\udf71</span> {gOrders.length} tiffins</span>
-                  <span className="bg-stone-100 px-2.5 py-1.5 rounded-md flex items-center gap-1.5"><span className="text-stone-400">\ud83d\udc64</span> {gOrders.length}</span>
-                  {stdCount > 0 && <span className="bg-stone-50 border border-stone-100 px-2.5 py-1.5 rounded-md text-stone-500">{stdCount}&times; Standard</span>}
-                  {jainCount > 0 && <span className="bg-green-50 text-green-700 px-2.5 py-1.5 rounded-md">{jainCount}&times; Jain</span>}
-                  {dietCount > 0 && <span className="bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-md">{dietCount}&times; Diet</span>}
-                  {regularCount > 0 && <span className="bg-stone-50 border border-stone-100 px-2.5 py-1.5 rounded-md text-stone-500">{regularCount}&times; Regular</span>}
-                </div>
-                
-                {/* Customers */}
-                <div className="mt-5 border-t border-stone-100">
-                  {gOrders.map(function(o, i) {
-                     var c = o.customer;
-                     var isJain = (c.food||"").toLowerCase().includes("jain");
-                     var isDiet = (c.food||"").toLowerCase().includes("diet");
-                     var isStd = (c.food||"").toLowerCase().includes("standard");
-                     var initials = c.name.split(" ").map(function(n){return n[0];}).join("").substring(0,2).toUpperCase();
-                     
-                     return (
-                       <div key={c.id} className={"py-3 flex items-center justify-between " + (i!==gOrders.length-1?"border-b border-stone-50":"")}>
-                         <div className="flex items-center gap-3">
-                           <div className="w-8 h-8 rounded-full bg-stone-100 text-stone-500 font-bold text-xs flex items-center justify-center shrink-0">{initials}</div>
-                           <p className="text-sm font-bold text-stone-700">{c.name}</p>
-                         </div>
-                         <div className="text-right">
-                           <span className={"text-[10px] font-bold block " + (isJain?"text-green-700":isDiet?"text-blue-600":"text-stone-400")}>
-                             1&times;<br/>{isJain?"Jain":isDiet?"Diet":isStd?"Standard":c.food||"Regular"}
-                           </span>
-                         </div>
-                       </div>
-                     );
-                  })}
-                </div>
-
-                {/* Bulk Advance Button */}
-                {!allDelivered && (
-                  <div className="flex gap-2 mt-4">
-                    <button onClick={function(){advanceGroup(advanceIds);}} className={"flex-1 py-3 rounded-xl text-sm font-black text-white active:scale-95 transition-transform " + (anyTransit ? "bg-green-500 shadow-lg shadow-green-500/20" : "bg-amber-500 shadow-lg shadow-amber-500/20")}>
-                      {nextAction}
-                    </button>
-                    <button onClick={function(){setRiderNext(advanceIds[0]);}} className="w-16 py-3 bg-stone-100 rounded-xl text-lg flex items-center justify-center active:scale-95 transition-transform border border-stone-200" title="Set as Next">
-                      ⭐️
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Ungrouped */}
-        {ungrouped.length > 0 && (
-          <div className="mt-8">
-            <h3 className="text-xs font-black text-stone-400 tracking-wider uppercase mb-3">Ungrouped Orders</h3>
-            <div className="space-y-3">
-               {ungrouped.map(function(o) {
-                 var c = o.customer;
-                 var isJain = (c.food||"").toLowerCase().includes("jain");
-                 var isDiet = (c.food||"").toLowerCase().includes("diet");
-                 var initials = c.name.split(" ").map(function(n){return n[0];}).join("").substring(0,2).toUpperCase();
-                 return (
-                   <div key={c.id} className="bg-white rounded-[20px] border border-stone-100 p-4 flex items-center justify-between shadow-sm">
-                     <div className="flex items-center gap-3">
-                       <div className="w-10 h-10 rounded-full bg-stone-100 text-stone-500 font-bold text-sm flex items-center justify-center shrink-0">{initials}</div>
-                       <div>
-                         <p className="text-sm font-bold text-stone-800">{c.name}</p>
-                         <p className="text-[10px] text-stone-400 mt-0.5 font-medium max-w-[150px] truncate">{c.address}</p>
-                       </div>
-                     </div>
-                     <div className="flex flex-col items-end gap-2">
-                       <span className={"text-[10px] font-bold " + (isJain?"text-green-700":isDiet?"text-blue-600":"text-stone-400")}>{c.food||"Regular"}</span>
-                       {o.order.status !== "delivered" ? (
-                         <div className="flex gap-1.5">
-                           <button onClick={function(){setRiderNext(c.id);}} className="bg-stone-100 text-stone-600 text-[10px] px-2 py-1.5 rounded-lg border border-stone-200" title="Next">⭐️</button>
-                           <button onClick={function(){advance(c.id);}} className="bg-blue-600 text-white text-[10px] px-3 py-1.5 rounded-lg font-bold">{o.order.status==="out"?"Deliver ✅":"Pick Up 🚴"}</button>
-                         </div>
-                       ) : (
-                         <span className="text-[10px] text-green-500 font-bold">Delivered ✅</span>
-                       )}
-                     </div>
-                   </div>
-                 );
-               })}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-8 pt-6 border-t border-stone-200">
-           <button onClick={logout} className="w-full py-3 text-stone-400 font-semibold text-sm">&larr; Switch Role</button>
-           <button onClick={resetDay} className="w-full py-3 text-red-400 font-semibold text-sm mt-2">Reset Day (Debug)</button>
-        </div>
       </div>
     </div>
   );
@@ -761,8 +790,10 @@ function ManagerView(props) {
   var getPaid=props.getPaid, getPayStat=props.getPayStat;
   var addPayment=props.addPayment, removePayment=props.removePayment;
   var resetDay=props.resetDay, advanceStatus=props.advanceStatus;
-  var curMonth=props.curMonth, delivPin=props.delivPin;
-  var setDelivPin=props.setDelivPin, mgrPin=props.mgrPin, setMgrPin=props.setMgrPin;
+  var curMonth=props.curMonth;
+  var setMgrPin=props.setMgrPin;
+  var onboardingPromptVersion=props.onboardingPromptVersion || "onboarding.v1";
+  var saveOnboardingPromptVersion=props.saveOnboardingPromptVersion;
   var logout=props.logout;
 
   var tabS=useState(function(){ var h=window.location.hash.replace("#",""); return h.startsWith("form/") ? h.split("/")[1] : (h||"dashboard"); });
@@ -777,13 +808,20 @@ function ManagerView(props) {
   var fmS=useState({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:"", paused:false, pauseFrom:"", pauseTo:""}); var form=fmS[0],setForm=fmS[1];
   var srS=useState(""); var search=srS[0],setSearch=srS[1];
   var cpS=useState(false); var copied=cpS[0],setCopied=cpS[1];
-  var ndS=useState(""); var newDP=ndS[0],setNewDP=ndS[1];
   var nmS=useState(""); var newMP=nmS[0],setNewMP=nmS[1];
   var psS=useState(false); var pinSaved=psS[0],setPinSaved=psS[1];
   var dcS=useState(null); var delConfirm=dcS[0],setDelConfirm=dcS[1];
   var wgS=useState(props.whatsappGroup||""); var wg=wgS[0],setWg=wgS[1];
+  var opvS=useState(onboardingPromptVersion); var onboardingVersion=opvS[0],setOnboardingVersion=opvS[1];
+  var oqS=useState([]); var onboardingQueue=oqS[0],setOnboardingQueue=oqS[1];
+  var oqLoadS=useState(false); var onboardingQueueLoading=oqLoadS[0],setOnboardingQueueLoading=oqLoadS[1];
+  var oqErrS=useState(""); var onboardingQueueError=oqErrS[0],setOnboardingQueueError=oqErrS[1];
+  var oqPinS=useState(""); var onboardingQueuePin=oqPinS[0],setOnboardingQueuePin=oqPinS[1];
+  var oqNoteS=useState({}); var onboardingNotes=oqNoteS[0],setOnboardingNotes=oqNoteS[1];
+  var oqBusyS=useState(""); var onboardingBusyId=oqBusyS[0],setOnboardingBusyId=oqBusyS[1];
   
   useEffect(function() { setWg(props.whatsappGroup||""); }, [props.whatsappGroup]);
+  useEffect(function() { setOnboardingVersion(onboardingPromptVersion); }, [onboardingPromptVersion]);
 
   useEffect(function() {
     function onHash() {
@@ -890,10 +928,45 @@ function ManagerView(props) {
 
   function savePins() {
     var saved = false;
-    if(newDP.length>=3) { props.setDelivPin(newDP); saved = true; }
     if(newMP.length>=4) { props.setMgrPin(newMP); saved = true; }
     if(wg !== props.whatsappGroup) { props.saveWhatsappGroup(wg); saved = true; }
+    if(onboardingVersion !== onboardingPromptVersion && saveOnboardingPromptVersion) { saveOnboardingPromptVersion(onboardingVersion); saved = true; }
     if(saved) { setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000); }
+  }
+
+  async function loadOnboardingQueue() {
+    if (!onboardingQueuePin.trim()) {
+      setOnboardingQueueError("Enter the manager PIN to load onboarding approvals.");
+      return;
+    }
+    setOnboardingQueueLoading(true);
+    setOnboardingQueueError("");
+    try {
+      const result = await listOnboardingQueueCallable({ pin: onboardingQueuePin.trim() });
+      setOnboardingQueue(result.data.items || []);
+    } catch (error) {
+      setOnboardingQueueError(error.message || "Could not load approvals.");
+    } finally {
+      setOnboardingQueueLoading(false);
+    }
+  }
+
+  async function resolveOnboardingItem(approvalId, action) {
+    setOnboardingBusyId(approvalId);
+    setOnboardingQueueError("");
+    try {
+      await resolveOnboardingApprovalCallable({
+        pin: onboardingQueuePin.trim(),
+        approvalId: approvalId,
+        action: action,
+        managerNote: onboardingNotes[approvalId] || "",
+      });
+      await loadOnboardingQueue();
+    } catch (error) {
+      setOnboardingQueueError(error.message || "Could not resolve onboarding approval.");
+    } finally {
+      setOnboardingBusyId("");
+    }
   }
 
   var todayMenuData = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
@@ -902,6 +975,7 @@ function ManagerView(props) {
     {id:"dashboard",icon:"📊",label:"Overview"},
     {id:"orders",   icon:"🚴",label:"Delivery"},
     {id:"customers",icon:"👥",label:"Customers"},
+    {id:"onboarding",icon:"💬",label:"Onboarding"},
     {id:"payments", icon:"💰",label:"Payments"},
     {id:"menu",     icon:"📋",label:"Menu"},
     {id:"settings", icon:"⚙️", label:"Settings"},
@@ -1132,6 +1206,47 @@ function ManagerView(props) {
           </div>
         )}
 
+        {tab==="onboarding" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">Pending approvals</p>
+              <div className="flex gap-2">
+                <input className={INP + " flex-1"} type="password" inputMode="text" placeholder="Enter manager PIN" value={onboardingQueuePin} onChange={function(e){setOnboardingQueuePin(e.target.value);}} />
+                <button onClick={loadOnboardingQueue} className="px-4 rounded-xl bg-orange-600 text-white font-black text-sm">Load</button>
+              </div>
+              {onboardingQueueError && <p className="text-xs text-red-600 font-semibold mt-2">{onboardingQueueError}</p>}
+              <p className="text-xs text-stone-400 mt-2">Prompt version: {onboardingPromptVersion}</p>
+            </div>
+            {onboardingQueueLoading && <div className="text-center text-stone-400 text-sm py-10">Loading approvals…</div>}
+            {!onboardingQueueLoading && onboardingQueue.length===0 && <div className="text-center text-stone-400 text-sm py-10">No pending onboarding approvals.</div>}
+            <div className="space-y-3">
+              {onboardingQueue.map(function(item) {
+                return (
+                  <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-black text-stone-800">{item.draft && item.draft.name ? item.draft.name : "New customer"}</p>
+                        <p className="text-xs text-stone-400 mt-1">{item.draft && item.draft.phone ? item.draft.phone : "No phone"} · {item.source || "chat"}</p>
+                      </div>
+                      <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">Pending</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-stone-600">
+                      <div className="bg-stone-50 rounded-xl p-2">Plan: <span className="font-bold">{item.draft && item.draft.plan ? item.draft.plan : "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2">Rate: <span className="font-bold">{item.draft && item.draft.rate ? fmt(item.draft.rate) : "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2 col-span-2">Address: <span className="font-bold">{item.draft && item.draft.address ? item.draft.address : "-"}</span></div>
+                    </div>
+                    <textarea className={INP + " resize-none"} rows={2} placeholder="Manager note (optional)" value={onboardingNotes[item.id] || ""} onChange={function(e){setOnboardingNotes(function(prev){var next=Object.assign({}, prev); next[item.id]=e.target.value; return next;});}}></textarea>
+                    <div className="flex gap-2">
+                      <button onClick={function(){resolveOnboardingItem(item.id, "reject");}} disabled={onboardingBusyId===item.id} className="flex-1 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 text-sm font-black">Reject</button>
+                      <button onClick={function(){resolveOnboardingItem(item.id, "approve");}} disabled={onboardingBusyId===item.id} className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-black">Approve</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {tab==="payments" && (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
@@ -1232,14 +1347,14 @@ function ManagerView(props) {
               <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-4">Access PINs</p>
               <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold text-stone-500 uppercase">New Delivery PIN</label>
-                  <p className="text-xs text-stone-400 mb-1.5">Share with your delivery person (min 3 digits)</p>
-                  <input className={INP} placeholder="Enter new delivery PIN" inputMode="numeric" value={newDP} onChange={function(e){setNewDP(e.target.value);}} maxLength={6}/>
-                </div>
-                <div>
                   <label className="text-xs font-bold text-stone-500 uppercase">New Manager PIN</label>
                   <p className="text-xs text-stone-400 mb-1.5">Leave blank to keep current (min 4 digits)</p>
                   <input className={INP} placeholder="Enter new manager PIN" type="password" inputMode="text" value={newMP} onChange={function(e){setNewMP(e.target.value);}} maxLength={12}/>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-stone-500 uppercase">Onboarding Prompt Version</label>
+                  <p className="text-xs text-stone-400 mb-1.5">Used by Gemini when extracting customer details</p>
+                  <input className={INP} placeholder="onboarding.v1" value={onboardingVersion} onChange={function(e){setOnboardingVersion(e.target.value);}} />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-stone-500 uppercase">WhatsApp Group Invite Link</label>
@@ -1349,21 +1464,16 @@ export default function App() {
   const [ords, setOrds] = useState([]);
   const [pays, setPays] = useState({});
   const [menu, setMenu] = useState({});
-  const [delivPin, setDelivPin] = useState("");
-  const [mgrPin, setMgrPin] = useState("");
   const [notifs, setNotifs] = useState({});
   const [custPhone, setCustPhone] = useState("");
   const [whatsappGroup, setWhatsappGroup] = useState("");
+  const [onboardingPromptVersion, setOnboardingPromptVersion] = useState("onboarding.v1");
+  const [onboardingPhone, setOnboardingPhone] = useState("");
 
   const [mgrPinHash, setMgrPinHash] = useState("");
-  const [delivPinHash, setDelivPinHash] = useState("");
-  // NOTE: userPin is intentionally never stored; all auth uses hashes only
-  const [userPin, setUserPin] = useState("");
 
   const [mgrInput, setMgrInput] = useState("");
   const [mgrErr, setMgrErr] = useState(false);
-  const [pinInput, setPinInput] = useState("");
-  const [pinErr, setPinErr] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phonErr, setPhonErr] = useState(false);
   const [custAttempts, setCustAttempts] = useState(0);
@@ -1398,7 +1508,6 @@ export default function App() {
 
   // Lockout error messages
   const [mgrLockMsg, setMgrLockMsg] = useState("");
-  const [delLockMsg, setDelLockMsg] = useState("");
 
   // ─── Firebase Anonymous Auth ──────────────────────────────────────────────
   const [authReady, setAuthReady] = useState(false);
@@ -1429,7 +1538,7 @@ export default function App() {
   const sessionRestored = useRef(false);
 
   useEffect(() => {
-    if (!authReady || !settingsReady || !customersReady || !mgrPinHash || !delivPinHash || sessionRestored.current) return;
+    if (!authReady || !settingsReady || !customersReady || !mgrPinHash || sessionRestored.current) return;
     sessionRestored.current = true;
 
     const savedRole = sessionStorage.getItem("tiffin_role");
@@ -1451,10 +1560,9 @@ export default function App() {
             sessionStorage.removeItem("tiffin_phone");
           }
         }
-      } else if (savedRole === "manager" || savedRole === "delivery") {
+      } else if (savedRole === "manager") {
         const savedPinHash = sessionStorage.getItem("tiffin_pin_hash") || "";
-        const expectedHash = savedRole === "manager" ? mgrPinHash : delivPinHash;
-        if (savedPinHash && savedPinHash === expectedHash) {
+        if (savedPinHash && savedPinHash === mgrPinHash) {
           // Hash matches current Firestore hash — session is valid
           setRole(savedRole);
           setScreen("app");
@@ -1465,7 +1573,7 @@ export default function App() {
         }
       }
     })();
-  }, [authReady, settingsReady, customersReady, mgrPinHash, delivPinHash, cust]);
+  }, [authReady, settingsReady, customersReady, mgrPinHash, cust]);
 
   // ─── Real-time Sync ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1548,30 +1656,29 @@ export default function App() {
       if (snapshot.exists()) {
         const data = snapshot.data();
         setMgrPinHash(data.mgrPinHash || "");
-        setDelivPinHash(data.delivPinHash || "");
         setWhatsappGroup(data.whatsappGroup || "");
-        setSettingsReady(Boolean(data.mgrPinHash && data.delivPinHash));
+        setOnboardingPromptVersion(data.onboardingPromptVersion || "onboarding.v1");
+        setSettingsReady(Boolean(data.mgrPinHash));
       } else {
         const defaultMgrHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
-        const defaultDelivHash = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4";
         try {
           await setDoc(settingsDocRef, {
             mgrPinHash: defaultMgrHash,
-            delivPinHash: defaultDelivHash,
             businessName: "Maa Sharda",
+            onboardingPromptVersion: "onboarding.v1",
             createdAt: new Date()
           });
         } catch (error) {
           console.error("Settings seed failed:", error);
         }
         setMgrPinHash(defaultMgrHash);
-        setDelivPinHash(defaultDelivHash);
+        setOnboardingPromptVersion("onboarding.v1");
         setSettingsReady(true);
       }
     }, (error) => {
       console.error("Settings sync failed:", error);
       setMgrPinHash("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
-      setDelivPinHash("03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4");
+      setOnboardingPromptVersion("onboarding.v1");
       setSettingsReady(true);
     });
 
@@ -1729,42 +1836,11 @@ export default function App() {
     clearLockout("tiffin_mgr_lockout");
     setMgrErr(false);
     setMgrLockMsg("");
-    setUserPin(mgrInput);
     // Fix 1: Store PIN hash (not plaintext) for secure session restoration
     sessionStorage.setItem("tiffin_role", "manager");
     sessionStorage.setItem("tiffin_pin_hash", hashed);
     setMgrInput("");
     setRole("manager");
-    setScreen("app");
-  }
-
-  async function loginDel() {
-    // Fix 2: Brute-force protection (persisted in sessionStorage)
-    const lockStatus = checkLockout("tiffin_del_lockout");
-    if (lockStatus.locked) {
-      setDelLockMsg(`Too many attempts. Try again in ${lockStatus.secs}s.`);
-      setPinErr(true);
-      return;
-    }
-    setDelLockMsg("");
-    const hashed = await hashPIN(pinInput);
-    if (hashed !== delivPinHash) {
-      recordFailedAttempt("tiffin_del_lockout", 5, 60000);
-      const ls = checkLockout("tiffin_del_lockout");
-      const attemptsLeft = 5 - ls.attempts;
-      setDelLockMsg(ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : `Incorrect PIN. Please try again. Attempts remaining: ${attemptsLeft}`);
-      setPinErr(true);
-      return;
-    }
-    clearLockout("tiffin_del_lockout");
-    setPinErr(false);
-    setDelLockMsg("");
-    setUserPin(pinInput);
-    // Fix 1: Store PIN hash (not plaintext) for secure session restoration
-    sessionStorage.setItem("tiffin_role", "delivery");
-    sessionStorage.setItem("tiffin_pin_hash", hashed);
-    setPinInput("");
-    setRole("delivery");
     setScreen("app");
   }
 
@@ -1778,13 +1854,9 @@ export default function App() {
     const ph = phoneInput.trim();
     const c = cust.find((x) => x.phone === ph);
     if (!c) {
-      const next = custAttempts + 1;
-      setCustAttempts(next);
-      if (next >= 3) {
-        setCustLockedUntil(Date.now() + 30000);
-        setCustAttempts(0);
-      }
-      setPhonErr(true);
+      setPhonErr(false);
+      setOnboardingPhone(ph);
+      setScreen("onboarding");
       return;
     }
     setPhonErr(false);
@@ -1801,18 +1873,17 @@ export default function App() {
     sessionStorage.removeItem("tiffin_role");
     sessionStorage.removeItem("tiffin_pin_hash");  // was: tiffin_userpin
     sessionStorage.removeItem("tiffin_phone");
+    sessionStorage.removeItem("tiffin_onboard_session");
+    sessionStorage.removeItem("tiffin_onboard_draft");
     setRole(null);
     setScreen("roleSelect");
     setPhoneInput("");
     setCustPhone("");
-    setPinInput("");
+    setOnboardingPhone("");
     setMgrInput("");
-    setUserPin("");
     setMgrErr(false);
-    setPinErr(false);
     setPhonErr(false);
     setMgrLockMsg("");
-    setDelLockMsg("");
   }
 
   async function advanceStatus(id) {
@@ -1847,24 +1918,6 @@ export default function App() {
     } catch (e) {
       console.error(e);
       alert("Error updating status: " + e.message);
-    }
-  }
-
-  async function advanceGroupStatus(ids) {
-    try {
-      await Promise.all(ids.map(id => advanceStatus(id)));
-    } catch(e) {
-      console.error(e);
-    }
-  }
-
-  // Fix 3: Replace read-modify-write setDoc with atomic updateDoc
-  async function setRiderNext(customerId) {
-    try {
-      const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", TODAY);
-      await updateDoc(orderDocRef, { [`${String(customerId)}.riderNextFlag`]: true });
-    } catch (e) {
-      console.error("setRiderNext failed:", e);
     }
   }
 
@@ -2022,18 +2075,6 @@ export default function App() {
     }
   }
 
-  async function updateDelivPin(newPin) {
-    try {
-      const newHash = await hashPIN(newPin);
-      if (newHash === delivPinHash) { alert("New PIN must be different."); return; }
-      const settingsRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
-      await updateDoc(settingsRef, { delivPinHash: newHash });
-    } catch (e) {
-      console.error(e);
-      alert("Error changing delivery PIN: " + e.message);
-    }
-  }
-
   async function updateMgrPin(newPin) {
     try {
       const newHash = await hashPIN(newPin);
@@ -2125,7 +2166,6 @@ export default function App() {
           <div className="space-y-3">
             {[
               { icon: "👔", title: "Business Owner", sub: "Full access", bdr: "border-orange-200 hover:border-orange-400", fn: function () { setScreen("mgrAuth"); }, highlight: roleParam === "manager" },
-              { icon: "🚴", title: "Delivery Person", sub: "Today's deliveries", bdr: "border-blue-200 hover:border-blue-400", fn: function () { setScreen("delivAuth"); }, highlight: roleParam === "delivery" },
               { icon: "👤", title: "I'm a Customer", sub: "My order & payment", bdr: "border-green-200 hover:border-green-400", fn: function () { setScreen("custAuth"); }, highlight: roleParam === "customer" }
             ].map(function (r) {
               return (
@@ -2149,13 +2189,6 @@ export default function App() {
       : null;
     return <AuthScreen icon="👔" title="Owner Access" subtitle="Enter your manager PIN" hdr="bg-orange-600" btn="bg-orange-600 hover:bg-orange-700" value={mgrInput} onChange={setMgrInput} error={mgrErrMsg} onBack={function () { setScreen("roleSelect"); setMgrErr(false); setMgrLockMsg(""); }} onSubmit={loginMgr} hint="Contact your IT setup person for initial PIN" isPhone={false} pinInputMode="text" />;
   }
-  if (screen === "delivAuth") {
-    const ls = checkLockout("tiffin_del_lockout");
-    const delErrMsg = pinErr
-      ? (ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : (delLockMsg || "Wrong PIN. Try again."))
-      : null;
-    return <AuthScreen icon="🚴" title="Delivery Access" subtitle="Enter your delivery PIN" hdr="bg-blue-600" btn="bg-blue-600 hover:bg-blue-700" value={pinInput} onChange={setPinInput} error={delErrMsg} onBack={function () { setScreen("roleSelect"); setPinErr(false); setDelLockMsg(""); }} onSubmit={loginDel} hint="Get the PIN from the business owner" isPhone={false} pinInputMode="numeric" />;
-  }
   if (screen === "custAuth") {
     const isLocked = Date.now() < custLockedUntil;
     const lockSecs = isLocked ? Math.ceil((custLockedUntil - Date.now()) / 1000) : 0;
@@ -2163,6 +2196,9 @@ export default function App() {
       ? (isLocked ? `Too many attempts. Wait ${lockSecs}s before trying again.` : "Number not registered. Contact your tiffin owner.")
       : null;
     return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600" btn="bg-green-600 hover:bg-green-700" value={phoneInput} onChange={setPhoneInput} error={custErrMsg} onBack={function () { setScreen("roleSelect"); setPhonErr(false); setCustAttempts(0); }} onSubmit={loginCust} hint="Use the phone number you gave the business owner" isPhone={true} />;
+  }
+  if (screen === "onboarding") {
+    return <OnboardingScreen phone={onboardingPhone} onClose={function () { setOnboardingPhone(""); setScreen("custAuth"); }} />;
   }
 
   // Reset Day confirmation modal (rendered at App level so it works across roles)
@@ -2186,17 +2222,7 @@ export default function App() {
     return (
       <div>
         {resetConfirmModal}
-        <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} delivPin={delivPin} setDelivPin={updateDelivPin} mgrPin={mgrPin} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} logout={logout} />
-      </div>
-    );
-  }
-
-  if (role === "delivery") {
-    // Delivery person cannot reset — only manager can
-    return (
-      <div>
-        {resetConfirmModal}
-        <DeliveryView orders={displayOrders} customers={cust} advance={advanceStatus} advanceGroup={advanceGroupStatus} setRiderNext={setRiderNext} logout={logout} stats={stats} />
+        <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} onboardingPromptVersion={onboardingPromptVersion} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} saveOnboardingPromptVersion={async function(version) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { onboardingPromptVersion: version }, { merge: true }); setOnboardingPromptVersion(version); }} logout={logout} />
       </div>
     );
   }

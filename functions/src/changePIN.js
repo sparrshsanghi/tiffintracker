@@ -1,7 +1,7 @@
 // changePIN.js
-// Changes either the manager or delivery PIN.
+// Changes the manager PIN.
 // Always requires the current manager PIN to authorize.
-// Rejects if the new PIN is the same as the current PIN for that target.
+// Rejects if the new PIN is the same as the current manager PIN.
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {hashPIN, getPINs, verifyManagerPIN} = require("./helpers/auth");
@@ -17,10 +17,10 @@ const changePIN = onCall(async (request) => {
         "currentPin, newPin, and target are required.",
     );
   }
-  if (!["manager", "delivery"].includes(target)) {
+  if (target !== "manager") {
     throw new HttpsError(
         "invalid-argument",
-        "target must be 'manager' or 'delivery'.",
+        "target must be 'manager'.",
     );
   }
 
@@ -30,21 +30,18 @@ const changePIN = onCall(async (request) => {
     throw new HttpsError("permission-denied", "Invalid current PIN.");
   }
 
-  // ── Reject if new PIN equals the current PIN for that target ──────────────
-  const {mgrPinHash, delivPinHash} = await getPINs();
+  // ── Reject if new PIN equals the current manager PIN ─────────────────────
+  const {mgrPinHash} = await getPINs();
   const newHash = hashPIN(newPin);
-  const currentTargetHash = target === "manager" ? mgrPinHash : delivPinHash;
-
-  if (newHash === currentTargetHash) {
+  if (newHash === mgrPinHash) {
     throw new HttpsError(
         "invalid-argument",
-        `New PIN must be different from the current ${target} PIN.`,
+        "New PIN must be different from the current manager PIN.",
     );
   }
 
   // ── Write new hash ────────────────────────────────────────────────────────
-  const field = target === "manager" ? "mgrPinHash" : "delivPinHash";
-  await settingsRef().update({[field]: newHash});
+  await settingsRef().update({mgrPinHash: newHash});
 
   return {success: true};
 });

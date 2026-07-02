@@ -49,7 +49,6 @@ async function seed() {
   const settingsRef = db.collection("businesses").doc(BUSINESS_ID).collection("config").doc("settings");
   batch.set(settingsRef, {
     mgrPinHash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", // 'test'
-    delivPinHash: "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4", // '1234'
     businessName: "Maa Sharda Tiffin (Seed)",
     createdAt: new Date(),
   });

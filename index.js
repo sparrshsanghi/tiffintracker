@@ -5,13 +5,9 @@ if (!admin.apps.length) {
 }
 
 const { confirmPayment } = require("./functions/src/confirmPayment");
-const {
-  updateDeliveryStatus,
-} = require("./functions/src/updateDeliveryStatus");
 const { changePIN } = require("./functions/src/changePIN");
 
 module.exports = {
   confirmPayment,
-  updateDeliveryStatus,
   changePIN,
 };

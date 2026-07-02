@@ -7,6 +7,8 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
+const db = admin.firestore();
+
 const BUSINESS_ID = "default";
 
 // ─── Ref helpers ───────────────────────────────────────────────────────────
@@ -16,7 +18,7 @@ const BUSINESS_ID = "default";
  * @return {admin.firestore.DocumentReference}
  */
 function businessRef() {
-  return admin.firestore().collection("businesses").doc(BUSINESS_ID);
+  return db.collection("businesses").doc(BUSINESS_ID);
 }
 
 /**
@@ -67,6 +69,30 @@ function notificationsRef() {
   return businessRef().collection("notifications");
 }
 
+/**
+ * Get onboarding sessions collection reference.
+ * @return {admin.firestore.CollectionReference}
+ */
+function onboardingSessionsRef() {
+  return businessRef().collection("onboardingSessions");
+}
+
+/**
+ * Get approvals collection reference.
+ * @return {admin.firestore.CollectionReference}
+ */
+function approvalsRef() {
+  return businessRef().collection("approvals");
+}
+
+/**
+ * Get audit logs collection reference.
+ * @return {admin.firestore.CollectionReference}
+ */
+function auditLogsRef() {
+  return businessRef().collection("auditLogs");
+}
+
 // ─── Shared operations ───────────────────────────────────────────────────────
 
 /**
@@ -106,6 +132,7 @@ async function writeNotification(phone, message, type = "general") {
 }
 
 module.exports = {
+  db,
   BUSINESS_ID,
   businessRef,
   settingsRef,
@@ -114,6 +141,9 @@ module.exports = {
   paymentsRef,
   menuRef,
   notificationsRef,
+  onboardingSessionsRef,
+  approvalsRef,
+  auditLogsRef,
   getCustomerPhone,
   writeNotification,
 };

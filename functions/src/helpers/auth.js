@@ -18,15 +18,15 @@ function hashPIN(pin) {
 /**
  * Fetch stored PIN hashes from Firestore config.
  * Throws if the settings document is missing (misconfigured project).
- * @return {Promise<{mgrPinHash: string, delivPinHash: string}>}
+ * @return {Promise<{mgrPinHash: string}>}
  */
 async function getPINs() {
   const snap = await settingsRef().get();
   if (!snap.exists) {
     throw new Error("Settings document not found. Run initial setup.");
   }
-  const {mgrPinHash, delivPinHash} = snap.data();
-  return {mgrPinHash, delivPinHash};
+  const {mgrPinHash, onboardingPromptVersion, geminiApiKey} = snap.data();
+  return {mgrPinHash, onboardingPromptVersion, geminiApiKey};
 }
 
 /**
@@ -39,18 +39,4 @@ async function verifyManagerPIN(pin) {
   return hashPIN(pin) === mgrPinHash;
 }
 
-/**
- * Verify a PIN against either the manager or delivery hash.
- * Returns the matched role, or null if neither matches.
- * @param {string} pin plain PIN from request
- * @return {Promise<"manager"|"delivery"|null>}
- */
-async function verifyEitherPIN(pin) {
-  const {mgrPinHash, delivPinHash} = await getPINs();
-  const hashed = hashPIN(pin);
-  if (hashed === mgrPinHash) return "manager";
-  if (hashed === delivPinHash) return "delivery";
-  return null;
-}
-
-module.exports = {hashPIN, getPINs, verifyManagerPIN, verifyEitherPIN};
+module.exports = {hashPIN, getPINs, verifyManagerPIN};

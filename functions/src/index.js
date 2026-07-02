@@ -9,8 +9,14 @@
 
 const {setGlobalOptions} = require("firebase-functions");
 const {confirmPayment} = require("./confirmPayment");
-const {updateDeliveryStatus} = require("./updateDeliveryStatus");
 const {changePIN} = require("./changePIN");
+const {
+  startOnboarding,
+  saveOnboardingDraft,
+  confirmOnboarding,
+  listOnboardingQueue,
+  resolveOnboardingApproval,
+} = require("./onboarding");
 const scheduledTasks = require("./scheduledTasks");
 
 // For cost control, you can set the maximum number of containers that can be
@@ -27,7 +33,11 @@ setGlobalOptions({maxInstances: 10});
 
 module.exports = {
   confirmPayment,
-  updateDeliveryStatus,
   changePIN,
+  startOnboarding,
+  saveOnboardingDraft,
+  confirmOnboarding,
+  listOnboardingQueue,
+  resolveOnboardingApproval,
   ...scheduledTasks,
 };
