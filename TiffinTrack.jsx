@@ -47,6 +47,10 @@ const saveOnboardingDraftCallable = httpsCallable(fns, "saveOnboardingDraft");
 const confirmOnboardingCallable = httpsCallable(fns, "confirmOnboarding");
 const listOnboardingQueueCallable = httpsCallable(fns, "listOnboardingQueue");
 const resolveOnboardingApprovalCallable = httpsCallable(fns, "resolveOnboardingApproval");
+const extractMaaAiIntentCallable = httpsCallable(fns, "extractMaaAiIntent");
+const createMaaAiPendingActionCallable = httpsCallable(fns, "createMaaAiPendingAction");
+const listMaaAiPendingActionsCallable = httpsCallable(fns, "listMaaAiPendingActions");
+const resolveMaaAiPendingActionCallable = httpsCallable(fns, "resolveMaaAiPendingAction");
 const createManagerTokenCallable = httpsCallable(fns, "createManagerToken");
 const createCustomerTokenCallable = httpsCallable(fns, "createCustomerToken");
 const changePINCallable = httpsCallable(fns, "changePIN");
@@ -902,6 +906,9 @@ function ManagerView(props) {
   var oqPinS=useState(managerPin); var onboardingQueuePin=oqPinS[0],setOnboardingQueuePin=oqPinS[1];
   var oqNoteS=useState({}); var onboardingNotes=oqNoteS[0],setOnboardingNotes=oqNoteS[1];
   var oqBusyS=useState(""); var onboardingBusyId=oqBusyS[0],setOnboardingBusyId=oqBusyS[1];
+  var aiqS=useState([]); var aiActionQueue=aiqS[0],setAiActionQueue=aiqS[1];
+  var aiqNoteS=useState({}); var aiActionNotes=aiqNoteS[0],setAiActionNotes=aiqNoteS[1];
+  var aiqBusyS=useState(""); var aiActionBusyId=aiqBusyS[0],setAiActionBusyId=aiqBusyS[1];
   var oqAutoLoadRef=useRef(false);
   
   useEffect(function() { setWg(props.whatsappGroup||""); }, [props.whatsappGroup]);
@@ -914,7 +921,7 @@ function ManagerView(props) {
   useEffect(function() {
     if ((managerPin || managerAuthenticated) && !oqAutoLoadRef.current) {
       oqAutoLoadRef.current = true;
-      loadOnboardingQueue(managerPin);
+      loadAiInbox(managerPin);
     }
   }, [managerPin, managerAuthenticated]);
 
@@ -1029,19 +1036,24 @@ function ManagerView(props) {
     if(saved) { setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000); }
   }
 
-  async function loadOnboardingQueue(pinOverride) {
+  async function loadAiInbox(pinOverride) {
     var pin = String(pinOverride || onboardingQueuePin || "").trim();
     if (!pin && !managerAuthenticated) {
-      setOnboardingQueueError("Enter the manager PIN to load onboarding approvals.");
+      setOnboardingQueueError("Enter the manager PIN to load AI Inbox.");
       return;
     }
     setOnboardingQueueLoading(true);
     setOnboardingQueueError("");
     try {
-      const result = await listOnboardingQueueCallable(pin ? { pin: pin } : {});
-      setOnboardingQueue(result.data.items || []);
+      const payload = pin ? { pin: pin } : {};
+      const results = await Promise.all([
+        listMaaAiPendingActionsCallable(payload),
+        listOnboardingQueueCallable(payload),
+      ]);
+      setAiActionQueue(results[0].data.items || []);
+      setOnboardingQueue(results[1].data.items || []);
     } catch (error) {
-      setOnboardingQueueError(error.message || "Could not load approvals.");
+      setOnboardingQueueError(error.message || "Could not load AI Inbox.");
     } finally {
       setOnboardingQueueLoading(false);
     }
@@ -1062,11 +1074,34 @@ function ManagerView(props) {
         action: action,
         managerNote: onboardingNotes[approvalId] || "",
       });
-      await loadOnboardingQueue(pin);
+      await loadAiInbox(pin);
     } catch (error) {
       setOnboardingQueueError(error.message || "Could not resolve onboarding approval.");
     } finally {
       setOnboardingBusyId("");
+    }
+  }
+
+  async function resolveMaaAiItem(approvalId, action) {
+    var pin = String(onboardingQueuePin || managerPin || "").trim();
+    if (!pin && !managerAuthenticated) {
+      setOnboardingQueueError("Enter the manager PIN to resolve AI actions.");
+      return;
+    }
+    setAiActionBusyId(approvalId);
+    setOnboardingQueueError("");
+    try {
+      await resolveMaaAiPendingActionCallable({
+        ...(pin ? { pin: pin } : {}),
+        approvalId: approvalId,
+        action: action,
+        managerNote: aiActionNotes[approvalId] || "",
+      });
+      await loadAiInbox(pin);
+    } catch (error) {
+      setOnboardingQueueError(error.message || "Could not resolve AI action.");
+    } finally {
+      setAiActionBusyId("");
     }
   }
 
@@ -1076,7 +1111,7 @@ function ManagerView(props) {
     {id:"dashboard",icon:"📊",label:"Overview"},
     {id:"orders",   icon:"🚴",label:"Delivery"},
     {id:"customers",icon:"👥",label:"Customers"},
-    {id:"onboarding",icon:"💬",label:"AI Inbox",badge:onboardingQueue.length},
+    {id:"onboarding",icon:"💬",label:"AI Inbox",badge:onboardingQueue.length + aiActionQueue.length},
     {id:"payments", icon:"💰",label:"Payments"},
     {id:"menu",     icon:"📋",label:"Menu"},
     {id:"settings", icon:"⚙️", label:"Settings"},
@@ -1317,22 +1352,59 @@ function ManagerView(props) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">Manager AI Inbox</p>
-                  <p className="text-lg font-black text-stone-800 mt-1">{onboardingQueue.length} pending approval{onboardingQueue.length===1 ? "" : "s"}</p>
+                  <p className="text-lg font-black text-stone-800 mt-1">{onboardingQueue.length + aiActionQueue.length} pending approval{onboardingQueue.length + aiActionQueue.length===1 ? "" : "s"}</p>
                 </div>
-                <button onClick={function(){loadOnboardingQueue();}} disabled={onboardingQueueLoading} className="px-4 py-2.5 rounded-xl bg-orange-600 text-white font-black text-sm disabled:opacity-50">Refresh</button>
+                <button onClick={function(){loadAiInbox();}} disabled={onboardingQueueLoading} className="px-4 py-2.5 rounded-xl bg-orange-600 text-white font-black text-sm disabled:opacity-50">Refresh</button>
               </div>
               {!managerPin && !managerAuthenticated && (
                 <div className="flex gap-2 mt-3">
                   <input className={INP + " flex-1"} type="password" inputMode="text" placeholder="Manager PIN" value={onboardingQueuePin} onChange={function(e){setOnboardingQueuePin(e.target.value);}} />
-                  <button onClick={function(){loadOnboardingQueue();}} className="px-4 rounded-xl bg-stone-800 text-white font-black text-sm">Load</button>
+                  <button onClick={function(){loadAiInbox();}} className="px-4 rounded-xl bg-stone-800 text-white font-black text-sm">Load</button>
                 </div>
               )}
               {onboardingQueueError && <p className="text-xs text-red-600 font-semibold mt-2">{onboardingQueueError}</p>}
               <p className="text-xs text-stone-400 mt-2">Prompt version: {onboardingPromptVersion}</p>
             </div>
             {onboardingQueueLoading && <div className="text-center text-stone-400 text-sm py-10">Loading approvals...</div>}
-            {!onboardingQueueLoading && onboardingQueue.length===0 && <div className="text-center text-stone-400 text-sm py-10">No pending onboarding approvals.</div>}
+            {!onboardingQueueLoading && onboardingQueue.length===0 && aiActionQueue.length===0 && <div className="text-center text-stone-400 text-sm py-10">No pending AI actions.</div>}
+            {!onboardingQueueLoading && aiActionQueue.length>0 && (
+              <div className="space-y-3">
+                <p className="text-xs font-black text-stone-400 tracking-wider uppercase">Pending AI Actions</p>
+                {aiActionQueue.map(function(item) {
+                  var intentLabel = item.intentLabel || (item.intent === "pause_meals" ? "Pause Meals" : item.intent === "resume_meals" ? "Resume Meals" : item.intent === "meal_change" ? "Meal Change" : "Address Change");
+                  var effectiveText = item.effectiveDate || item.startDate || item.resumeDate || "-";
+                  var currentText = item.currentValue || "-";
+                  var requestedText = item.requestedValue || (item.intent === "pause_meals" ? ((item.startDate || "-") + " to " + (item.endDate || "-")) : item.resumeDate || item.mealPreference || item.address || "-");
+                  return (
+                    <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-black text-stone-800">{item.customerName || item.customerId || "Customer"}</p>
+                          <p className="text-xs text-stone-400 mt-1">{item.customerPhone || "No phone"} · {item.source || "customer_chat"}</p>
+                        </div>
+                        <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">Pending</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-stone-600">
+                        <div className="bg-stone-50 rounded-xl p-2">Intent: <span className="font-bold">{intentLabel}</span></div>
+                        <div className="bg-stone-50 rounded-xl p-2">Confidence: <span className="font-bold">{Math.round((item.confidence || 0) * 100)}%</span></div>
+                        <div className="bg-stone-50 rounded-xl p-2 col-span-2">Current Value: <span className="font-bold">{currentText}</span></div>
+                        <div className="bg-stone-50 rounded-xl p-2 col-span-2">Requested Value: <span className="font-bold">{requestedText}</span></div>
+                        <div className="bg-stone-50 rounded-xl p-2 col-span-2">Effective Date: <span className="font-bold">{effectiveText}</span></div>
+                        <div className="bg-stone-50 rounded-xl p-2 col-span-2">Reason: <span className="font-bold">{item.reason || "-"}</span></div>
+                        {item.sourceMessage && <div className="bg-stone-50 rounded-xl p-2 col-span-2">Message: <span className="font-bold">{item.sourceMessage}</span></div>}
+                      </div>
+                      <textarea className={INP + " resize-none"} rows={2} placeholder="Manager note (optional)" value={aiActionNotes[item.id] || ""} onChange={function(e){setAiActionNotes(function(prev){var next=Object.assign({}, prev); next[item.id]=e.target.value; return next;});}}></textarea>
+                      <div className="flex gap-2">
+                        <button onClick={function(){resolveMaaAiItem(item.id, "reject");}} disabled={aiActionBusyId===item.id} className="flex-1 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 text-sm font-black disabled:opacity-50">Reject</button>
+                        <button onClick={function(){resolveMaaAiItem(item.id, "approve");}} disabled={aiActionBusyId===item.id} className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-black disabled:opacity-50">Approve</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="space-y-3">
+              {onboardingQueue.length>0 && <p className="text-xs font-black text-stone-400 tracking-wider uppercase">Onboarding Approvals</p>}
               {onboardingQueue.map(function(item) {
                 var draft = item.draft || {};
                 return (
@@ -1722,6 +1794,9 @@ export default function App() {
         food: d.food,
         rate: d.rate,
         active: d.active,
+        paused: d.paused || false,
+        pauseFrom: d.pauseFrom || "",
+        pauseTo: d.pauseTo || "",
         group: d.group || "",
         deliveryOrder: d.deliveryOrder,
         resumeDate: d.resumeDate,
@@ -2270,6 +2345,10 @@ export default function App() {
         food: c.food,
         rate: c.rate,
         active: c.active !== undefined ? c.active : true,
+        paused: c.paused || false,
+        pauseFrom: c.pauseFrom || "",
+        pauseTo: c.pauseTo || "",
+        resumeDate: c.resumeDate || "",
         createdAt: c.createdAt || new Date()
       }, { merge: true });
     }
@@ -2294,7 +2373,7 @@ export default function App() {
     const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
     const activeCustomers = cust.filter((c) => {
       if (c.active === false) return false;
-      if (c.paused === true) return false;
+      if (c.paused === true && (!c.pauseFrom || !c.pauseTo)) return false;
       if (c.pauseFrom && c.pauseTo && today >= c.pauseFrom && today <= c.pauseTo) return false;
       return true;
     });
@@ -2472,6 +2551,20 @@ export default function App() {
         logout={logout}
         todayMenu={todayMenu}
         weekMenu={weekMenu}
+        extractMaaAiIntent={async function(text) {
+          if (!c) throw new Error("Customer profile is not ready.");
+          const result = await extractMaaAiIntentCallable({ text: text, customerId: c.id });
+          return result.data;
+        }}
+        confirmMaaAiAction={async function(payload) {
+          if (!c) throw new Error("Customer profile is not ready.");
+          const result = await createMaaAiPendingActionCallable({
+            text: payload.text,
+            extraction: payload.extraction,
+            customerId: c.id,
+          });
+          return result.data;
+        }}
       />
     );
   }

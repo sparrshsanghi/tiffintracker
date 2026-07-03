@@ -12,6 +12,12 @@ const {confirmPayment} = require("./confirmPayment");
 const {changePIN} = require("./changePIN");
 const {createManagerToken, createCustomerToken} = require("./identityService");
 const {
+  extractMaaAiIntent,
+  createMaaAiPendingAction,
+  listMaaAiPendingActions,
+  resolveMaaAiPendingAction,
+} = require("./maaAi");
+const {
   startOnboarding,
   saveOnboardingDraft,
   confirmOnboarding,
@@ -37,6 +43,10 @@ module.exports = {
   changePIN,
   createManagerToken,
   createCustomerToken,
+  extractMaaAiIntent,
+  createMaaAiPendingAction,
+  listMaaAiPendingActions,
+  resolveMaaAiPendingAction,
   startOnboarding,
   saveOnboardingDraft,
   confirmOnboarding,

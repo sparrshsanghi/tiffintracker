@@ -2,6 +2,7 @@
 // Change BUSINESS_ID here if multi-tenant support is added later.
 
 const admin = require("firebase-admin");
+const {FieldValue} = require("firebase-admin/firestore");
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -127,7 +128,7 @@ async function writeNotification(phone, message, type = "general") {
     message,
     type,
     read: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 }
 

@@ -39,9 +39,25 @@ export function CustomerView(props) {
   var notifs=props.notifs, onRead=props.onRead;
   var curMonLabel=props.curMonLabel, logout=props.logout;
   var todayMenu=props.todayMenu, weekMenu=props.weekMenu;
+  var extractMaaAiIntent=props.extractMaaAiIntent;
+  var confirmMaaAiAction=props.confirmMaaAiAction;
 
   var tabState = useState("home");
   var tab = tabState[0], setTab = tabState[1];
+  var aiMsgState = useState([
+    { role: "assistant", text: "Tell me when you want to pause or resume meals." },
+  ]);
+  var aiMessages = aiMsgState[0], setAiMessages = aiMsgState[1];
+  var aiInputState = useState("");
+  var aiInput = aiInputState[0], setAiInput = aiInputState[1];
+  var aiDraftState = useState(null);
+  var aiDraft = aiDraftState[0], setAiDraft = aiDraftState[1];
+  var aiBusyState = useState(false);
+  var aiBusy = aiBusyState[0], setAiBusy = aiBusyState[1];
+  var aiErrState = useState("");
+  var aiErr = aiErrState[0], setAiErr = aiErrState[1];
+  var aiPendingState = useState("");
+  var aiPending = aiPendingState[0], setAiPending = aiPendingState[1];
 
   if (!customer) {
     return (
@@ -66,6 +82,84 @@ export function CustomerView(props) {
   var TODAY_IDX = (new Date().getDay() + 6) % 7;
   const cRate = customer.rate || 0;
   const isPaid = paid >= cRate && cRate > 0;
+  const pauseText = customer.paused || customer.active === false
+    ? (customer.pauseTo ? "Meals paused until " + customer.pauseTo : "Meals paused")
+    : "";
+
+  function actionLabel(intent) {
+    if (intent === "pause_meals") return "Pause Meals";
+    if (intent === "resume_meals") return "Resume Meals";
+    if (intent === "meal_change") return "Meal Change";
+    if (intent === "address_change") return "Address Change";
+    return "Unsupported";
+  }
+
+  function dateLine(extraction) {
+    if (!extraction) return "";
+    if (extraction.intent === "pause_meals") {
+      return (extraction.startDate || "-") + " to " + (extraction.endDate || "-");
+    }
+    return extraction.effectiveDate || extraction.resumeDate || extraction.startDate || "-";
+  }
+
+  function requestedLine(extraction) {
+    if (!extraction) return "";
+    if (extraction.intent === "meal_change") return extraction.mealPreference || "-";
+    if (extraction.intent === "address_change") return extraction.address || "-";
+    if (extraction.intent === "pause_meals") return "Pause meals";
+    return "Resume meals";
+  }
+
+  async function sendAiMessage() {
+    var text = aiInput.trim();
+    if (!text || aiBusy || !extractMaaAiIntent) return;
+    setAiBusy(true);
+    setAiErr("");
+    setAiPending("");
+    setAiDraft(null);
+    setAiMessages(function(prev){ return prev.concat([{ role: "user", text: text }]); });
+    try {
+      var result = await extractMaaAiIntent(text);
+      if (!result || result.supported === false) {
+        setAiMessages(function(prev){ return prev.concat([{ role: "assistant", text: (result && result.message) || "This request is not supported yet." }]); });
+        return;
+      }
+      if (result.needsClarification) {
+        setAiMessages(function(prev){ return prev.concat([{ role: "assistant", text: result.clarificationQuestion || "Please clarify this request." }]); });
+        return;
+      }
+      var draft = Object.assign({}, result.extraction, {
+        originalText: text,
+        confirmationText: result.confirmationText,
+      });
+      setAiDraft(draft);
+      setAiMessages(function(prev){ return prev.concat([{ role: "assistant", text: result.confirmationText || "Please confirm this request." }]); });
+    } catch (error) {
+      setAiErr(error.message || "Could not understand that message.");
+    } finally {
+      setAiInput("");
+      setAiBusy(false);
+    }
+  }
+
+  async function confirmAiDraft() {
+    if (!aiDraft || aiBusy || !confirmMaaAiAction) return;
+    setAiBusy(true);
+    setAiErr("");
+    try {
+      var result = await confirmMaaAiAction({
+        text: aiDraft.originalText,
+        extraction: aiDraft,
+      });
+      setAiPending((result && result.approvalId) || "pending");
+      setAiMessages(function(prev){ return prev.concat([{ role: "assistant", text: (result && result.customerMessage) || "Sent to the manager for approval." }]); });
+      setAiDraft(null);
+    } catch (error) {
+      setAiErr(error.message || "Could not send this for approval.");
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-stone-50" style={{fontFamily:"'Inter', system-ui, sans-serif"}}>
@@ -80,6 +174,7 @@ export function CustomerView(props) {
         {[
           { id: "home", label: "Home" },
           { id: "menu", label: "Menu" },
+          { id: "chat", label: "Chat" },
           { id: "payment", label: "Payment" },
           { id: "alerts", label: "Alerts", badge: unread > 0 },
         ].map(t => (
@@ -109,6 +204,13 @@ export function CustomerView(props) {
                  {todayMenu && todayMenu.items.length > 0 ? todayMenu.items.join(" · ") : getDefaultFood(customer.food)}
                </p>
              </div>
+
+             {pauseText && (
+               <div className="bg-red-50 border border-red-100 rounded-xl px-4 py-3 shadow-sm">
+                 <p className="text-xs font-bold text-red-700">{pauseText}</p>
+                 {customer.resumeDate && <p className="text-xs text-red-400 mt-0.5">Resume date: {customer.resumeDate}</p>}
+               </div>
+             )}
 
              <div className="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
                <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-4">Delivery Status</p>
@@ -193,6 +295,43 @@ export function CustomerView(props) {
                })}
              </div>
            </>
+         )}
+
+         {tab === "chat" && (
+           <div className="space-y-3">
+             <div className="bg-white rounded-2xl border border-stone-100 p-4 shadow-sm space-y-3">
+               {aiMessages.map(function(message, index) {
+                 return (
+                   <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
+                     <div className={"inline-block max-w-[92%] rounded-2xl px-4 py-3 text-sm font-medium whitespace-pre-wrap " + (message.role === "user" ? "bg-amber-500 text-white" : "bg-stone-100 text-stone-700")}>{message.text}</div>
+                   </div>
+                 );
+               })}
+               {aiDraft && (
+                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 space-y-2">
+                   <div className="grid grid-cols-2 gap-2 text-xs text-stone-700">
+                     <div className="bg-white rounded-xl p-2">Intent: <span className="font-bold">{actionLabel(aiDraft.intent)}</span></div>
+                     <div className="bg-white rounded-xl p-2">Confidence: <span className="font-bold">{Math.round((aiDraft.confidence || 0) * 100)}%</span></div>
+                     <div className="bg-white rounded-xl p-2 col-span-2">Requested: <span className="font-bold">{requestedLine(aiDraft)}</span></div>
+                     <div className="bg-white rounded-xl p-2 col-span-2">Effective: <span className="font-bold">{dateLine(aiDraft)}</span></div>
+                     <div className="bg-white rounded-xl p-2 col-span-2">Reason: <span className="font-bold">{aiDraft.reason || "-"}</span></div>
+                   </div>
+                   <div className="flex gap-2">
+                     <button onClick={function(){setAiDraft(null);}} disabled={aiBusy} className="flex-1 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-500 text-sm font-black disabled:opacity-50">Cancel</button>
+                     <button onClick={confirmAiDraft} disabled={aiBusy} className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-black disabled:opacity-50">Confirm</button>
+                   </div>
+                 </div>
+               )}
+               {aiPending && (
+                 <div className="rounded-2xl bg-green-50 border border-green-100 p-3 text-sm text-green-700 font-semibold">Waiting for manager approval.</div>
+               )}
+               {aiErr && <p className="text-xs text-red-600 font-semibold">{aiErr}</p>}
+               <div className="flex gap-2">
+                 <input className="flex-1 border border-stone-200 rounded-xl px-3 py-2.5 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-stone-50" placeholder="Message Maa AI" value={aiInput} onChange={function(e){setAiInput(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")sendAiMessage();}} />
+                 <button onClick={sendAiMessage} disabled={aiBusy || !aiInput.trim()} className="px-4 rounded-xl font-black text-sm bg-amber-500 text-white disabled:opacity-50">Send</button>
+               </div>
+             </div>
+           </div>
          )}
 
          {tab === "payment" && (

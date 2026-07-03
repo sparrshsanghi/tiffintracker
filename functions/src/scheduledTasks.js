@@ -4,6 +4,12 @@ const {FieldValue} = require("firebase-admin/firestore");
 
 const BUSINESS_ID = "default";
 
+function isPausedForDate(data, today) {
+  if (data.paused !== true) return false;
+  if (!data.pauseFrom || !data.pauseTo) return data.active === false;
+  return data.pauseFrom <= today && today <= data.pauseTo;
+}
+
 // Runs every day at 6:00 AM IST
 exports.scheduledDailyReset = onSchedule({
   schedule: "0 6 * * *",
@@ -28,6 +34,10 @@ exports.scheduledDailyReset = onSchedule({
       updatedAt: new Date(),
       updatedBy: "system_daily_reset",
     };
+    const data = doc.data();
+    if (isPausedForDate(data, TODAY)) {
+      delete orderData[doc.id];
+    }
   });
 
   if (Object.keys(orderData).length > 0) {
@@ -45,18 +55,28 @@ exports.checkPauseResume = onSchedule({
   const istTime = new Date(now.getTime() + istOffset);
   const TODAY = istTime.toISOString().split("T")[0];
 
-  const pausedCustomers = await db.collection("businesses").doc(BUSINESS_ID)
-      .collection("customers").where("active", "==", false).get();
+  const customers = await db.collection("businesses").doc(BUSINESS_ID)
+      .collection("customers").get();
 
   const batch = db.batch();
   let count = 0;
 
-  pausedCustomers.forEach((doc) => {
+  customers.forEach((doc) => {
     const data = doc.data();
-    if (data.resumeDate && data.resumeDate <= TODAY) {
+    if (data.paused === true &&
+        (data.resumeDate && data.resumeDate <= TODAY ||
+          data.pauseTo && data.pauseTo < TODAY)) {
       batch.update(doc.ref, {
         active: true,
+        paused: false,
+        pauseFrom: FieldValue.delete(),
+        pauseTo: FieldValue.delete(),
         resumeDate: FieldValue.delete(),
+      });
+      count++;
+    } else if (isPausedForDate(data, TODAY) && data.active !== false) {
+      batch.update(doc.ref, {
+        active: false,
       });
       count++;
     }
