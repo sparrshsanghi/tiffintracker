@@ -22,8 +22,9 @@ import {
 import { getFunctions, httpsCallable } from "firebase/functions";
 import {
   getAuth,
-  signInAnonymously,
-  onAuthStateChanged
+  signInWithCustomToken,
+  onAuthStateChanged,
+  signOut
 } from "firebase/auth";
 import { CustomerView, BrandLogo } from "./src/Views.jsx";
 
@@ -46,6 +47,9 @@ const saveOnboardingDraftCallable = httpsCallable(fns, "saveOnboardingDraft");
 const confirmOnboardingCallable = httpsCallable(fns, "confirmOnboarding");
 const listOnboardingQueueCallable = httpsCallable(fns, "listOnboardingQueue");
 const resolveOnboardingApprovalCallable = httpsCallable(fns, "resolveOnboardingApproval");
+const createManagerTokenCallable = httpsCallable(fns, "createManagerToken");
+const createCustomerTokenCallable = httpsCallable(fns, "createCustomerToken");
+const changePINCallable = httpsCallable(fns, "changePIN");
 
 const BUSINESS_ID = "default";
 
@@ -56,6 +60,10 @@ async function hashPIN(pin) {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function normalizePhone(phone) {
+  return String(phone || "").replace(/\D/g, "").slice(-10);
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -180,8 +188,9 @@ function AuthScreen(props) {
 }
 
 function OnboardingScreen(props) {
-  const initialPhone = props.phone || "";
+  const initialPhone = normalizePhone(props.phone || "");
   const onClose = props.onClose;
+  const onApproved = props.onApproved;
   const [sessionId, setSessionId] = useState(sessionStorage.getItem("tiffin_onboard_session") || "");
   const [draft, setDraft] = useState(() => ({
     name: "",
@@ -202,6 +211,7 @@ function OnboardingScreen(props) {
   const [busy, setBusy] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const recognitionRef = useRef(null);
+  const lastSessionStatusRef = useRef("");
 
   useEffect(() => {
     setDraft((prev) => Object.assign({}, prev, { phone: initialPhone || prev.phone }));
@@ -226,6 +236,31 @@ function OnboardingScreen(props) {
   useEffect(() => {
     setVoiceSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
   }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const sessionRef = doc(db, "businesses", BUSINESS_ID, "onboardingSessions", sessionId);
+    return onSnapshot(sessionRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (data.draft) {
+        syncDraft(data.draft);
+      }
+      if (data.status) {
+        setStatus(data.status);
+        if (data.status === "approved" && lastSessionStatusRef.current !== "approved") {
+          setMessages((prev) => prev.concat([{ role: "assistant", text: "Approved. Your customer profile is ready." }]));
+        }
+        if (data.status === "rejected" && lastSessionStatusRef.current !== "rejected") {
+          const note = data.managerNote ? ` Note: ${data.managerNote}` : "";
+          setMessages((prev) => prev.concat([{ role: "assistant", text: `The manager rejected this request.${note}` }]));
+        }
+        lastSessionStatusRef.current = data.status;
+      }
+    }, (err) => {
+      setError(err?.message || "Could not watch onboarding status.");
+    });
+  }, [sessionId]);
 
   function syncDraft(nextDraft) {
     setDraft((prev) => Object.assign({}, prev, nextDraft));
@@ -319,7 +354,9 @@ function OnboardingScreen(props) {
       const currentSessionId = await ensureSession();
       const result = await confirmOnboardingCallable({ sessionId: currentSessionId, draft });
       const data = result.data || {};
-      setStatus(data.status || "pending_manager_approval");
+      const nextStatus = data.status || "pending_manager_approval";
+      setStatus(nextStatus);
+      lastSessionStatusRef.current = nextStatus;
       setMessages((prev) => prev.concat([{ role: "assistant", text: `Submitted for manager approval. ${data.summary ? "\n" + data.summary : ""}` }]));
     } catch (err) {
       setError(err?.message || "Could not submit onboarding.");
@@ -351,6 +388,38 @@ function OnboardingScreen(props) {
   }
 
   const ready = draft.name && draft.phone && draft.address && draft.plan && draft.food && Number(draft.rate) > 0;
+  const waitingApproval = status === "pending_manager_approval";
+  const approved = status === "approved";
+  const rejected = status === "rejected";
+  const locked = waitingApproval || approved;
+  const statusLabel = approved ? "Approved" : rejected ? "Rejected" : waitingApproval ? "Waiting" : ready ? "Ready" : status;
+  const statusClass = approved
+    ? "bg-green-100 text-green-700"
+    : rejected
+      ? "bg-red-100 text-red-700"
+      : ready
+        ? "bg-green-100 text-green-700"
+        : "bg-amber-100 text-amber-700";
+
+  function resetOnboarding() {
+    sessionStorage.removeItem("tiffin_onboard_session");
+    sessionStorage.removeItem("tiffin_onboard_draft");
+    setSessionId("");
+    setStatus("collecting");
+    lastSessionStatusRef.current = "";
+    setDraft({ name: "", phone: initialPhone, address: "", group: "", plan: "daily", food: "", rate: "", notes: "" });
+    setMessages([{ role: "assistant", text: "Tell me your name, phone, address, meal plan, food order, and monthly rate. You can type naturally or use voice." }]);
+  }
+
+  function continueToPortal() {
+    sessionStorage.removeItem("tiffin_onboard_session");
+    sessionStorage.removeItem("tiffin_onboard_draft");
+    if (onApproved) {
+      onApproved(normalizePhone(draft.phone || initialPhone));
+      return;
+    }
+    onClose();
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-orange-100 flex flex-col" style={{ fontFamily: "system-ui,sans-serif" }}>
@@ -384,7 +453,7 @@ function OnboardingScreen(props) {
               <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">Draft profile</p>
               <p className="text-sm text-stone-500">Conversation state is saved as you go.</p>
             </div>
-            <span className={"text-xs font-black px-3 py-1.5 rounded-full " + (ready ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700")}>{ready ? "Ready" : status}</span>
+            <span className={"text-xs font-black px-3 py-1.5 rounded-full " + statusClass}>{statusLabel}</span>
           </div>
           {[
             ["name", "Name"],
@@ -401,15 +470,27 @@ function OnboardingScreen(props) {
             return (
               <div key={key}>
                 <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">{label}</label>
-                <input className={INP + " mt-1"} value={draft[key] || ""} onChange={function(e){syncDraft({ [key]: e.target.value });}} />
+                <input className={INP + " mt-1"} value={draft[key] || ""} disabled={locked} onChange={function(e){syncDraft({ [key]: e.target.value });}} />
               </div>
             );
           })}
           <div className="flex gap-2">
-            <button onClick={saveDraft} disabled={busy || !sessionId} className="flex-1 py-3 rounded-2xl bg-stone-100 text-stone-700 font-black">Save draft</button>
-            <button onClick={submitForApproval} disabled={busy || !ready || !sessionId} className="flex-1 py-3 rounded-2xl bg-green-600 text-white font-black">Confirm & send</button>
+            <button onClick={saveDraft} disabled={busy || locked} className="flex-1 py-3 rounded-2xl bg-stone-100 text-stone-700 font-black disabled:opacity-50">Save draft</button>
+            <button onClick={submitForApproval} disabled={busy || !ready || locked} className="flex-1 py-3 rounded-2xl bg-green-600 text-white font-black disabled:opacity-50">Confirm & send</button>
           </div>
-          {status === "pending_manager_approval" && <div className="rounded-2xl bg-green-50 border border-green-100 p-3 text-sm text-green-700 font-semibold">Submitted. A manager will review this profile next.</div>}
+          {waitingApproval && <div className="rounded-2xl bg-green-50 border border-green-100 p-3 text-sm text-green-700 font-semibold">Submitted. A manager will review this profile next.</div>}
+          {approved && (
+            <div className="rounded-2xl bg-green-50 border border-green-100 p-3 text-sm text-green-700 font-semibold">
+              <p>Your profile has been approved.</p>
+              <button onClick={continueToPortal} className="mt-3 w-full py-2.5 rounded-xl bg-green-600 text-white font-black text-sm">Open customer portal</button>
+            </div>
+          )}
+          {rejected && (
+            <div className="rounded-2xl bg-red-50 border border-red-100 p-3 text-sm text-red-700 font-semibold">
+              <p>This request was rejected.</p>
+              <button onClick={resetOnboarding} className="mt-3 w-full py-2.5 rounded-xl bg-white border border-red-200 text-red-600 font-black text-sm">Start again</button>
+            </div>
+          )}
           <pre className="text-xs text-stone-500 bg-stone-50 rounded-2xl p-3 whitespace-pre-wrap overflow-x-auto">{summarize(draft) || "No draft yet."}</pre>
         </div>
       </div>
@@ -794,6 +875,8 @@ function ManagerView(props) {
   var setMgrPin=props.setMgrPin;
   var onboardingPromptVersion=props.onboardingPromptVersion || "onboarding.v1";
   var saveOnboardingPromptVersion=props.saveOnboardingPromptVersion;
+  var managerPin=props.managerPin || "";
+  var managerAuthenticated=props.managerAuthenticated === true;
   var logout=props.logout;
 
   var tabS=useState(function(){ var h=window.location.hash.replace("#",""); return h.startsWith("form/") ? h.split("/")[1] : (h||"dashboard"); });
@@ -816,12 +899,24 @@ function ManagerView(props) {
   var oqS=useState([]); var onboardingQueue=oqS[0],setOnboardingQueue=oqS[1];
   var oqLoadS=useState(false); var onboardingQueueLoading=oqLoadS[0],setOnboardingQueueLoading=oqLoadS[1];
   var oqErrS=useState(""); var onboardingQueueError=oqErrS[0],setOnboardingQueueError=oqErrS[1];
-  var oqPinS=useState(""); var onboardingQueuePin=oqPinS[0],setOnboardingQueuePin=oqPinS[1];
+  var oqPinS=useState(managerPin); var onboardingQueuePin=oqPinS[0],setOnboardingQueuePin=oqPinS[1];
   var oqNoteS=useState({}); var onboardingNotes=oqNoteS[0],setOnboardingNotes=oqNoteS[1];
   var oqBusyS=useState(""); var onboardingBusyId=oqBusyS[0],setOnboardingBusyId=oqBusyS[1];
+  var oqAutoLoadRef=useRef(false);
   
   useEffect(function() { setWg(props.whatsappGroup||""); }, [props.whatsappGroup]);
   useEffect(function() { setOnboardingVersion(onboardingPromptVersion); }, [onboardingPromptVersion]);
+  useEffect(function() {
+    if (managerPin) {
+      setOnboardingQueuePin(managerPin);
+    }
+  }, [managerPin]);
+  useEffect(function() {
+    if ((managerPin || managerAuthenticated) && !oqAutoLoadRef.current) {
+      oqAutoLoadRef.current = true;
+      loadOnboardingQueue(managerPin);
+    }
+  }, [managerPin, managerAuthenticated]);
 
   useEffect(function() {
     function onHash() {
@@ -934,15 +1029,16 @@ function ManagerView(props) {
     if(saved) { setPinSaved(true); setTimeout(function(){setPinSaved(false);},2000); }
   }
 
-  async function loadOnboardingQueue() {
-    if (!onboardingQueuePin.trim()) {
+  async function loadOnboardingQueue(pinOverride) {
+    var pin = String(pinOverride || onboardingQueuePin || "").trim();
+    if (!pin && !managerAuthenticated) {
       setOnboardingQueueError("Enter the manager PIN to load onboarding approvals.");
       return;
     }
     setOnboardingQueueLoading(true);
     setOnboardingQueueError("");
     try {
-      const result = await listOnboardingQueueCallable({ pin: onboardingQueuePin.trim() });
+      const result = await listOnboardingQueueCallable(pin ? { pin: pin } : {});
       setOnboardingQueue(result.data.items || []);
     } catch (error) {
       setOnboardingQueueError(error.message || "Could not load approvals.");
@@ -952,16 +1048,21 @@ function ManagerView(props) {
   }
 
   async function resolveOnboardingItem(approvalId, action) {
+    var pin = String(onboardingQueuePin || managerPin || "").trim();
+    if (!pin && !managerAuthenticated) {
+      setOnboardingQueueError("Enter the manager PIN to resolve onboarding approvals.");
+      return;
+    }
     setOnboardingBusyId(approvalId);
     setOnboardingQueueError("");
     try {
       await resolveOnboardingApprovalCallable({
-        pin: onboardingQueuePin.trim(),
+        ...(pin ? { pin: pin } : {}),
         approvalId: approvalId,
         action: action,
         managerNote: onboardingNotes[approvalId] || "",
       });
-      await loadOnboardingQueue();
+      await loadOnboardingQueue(pin);
     } catch (error) {
       setOnboardingQueueError(error.message || "Could not resolve onboarding approval.");
     } finally {
@@ -975,7 +1076,7 @@ function ManagerView(props) {
     {id:"dashboard",icon:"📊",label:"Overview"},
     {id:"orders",   icon:"🚴",label:"Delivery"},
     {id:"customers",icon:"👥",label:"Customers"},
-    {id:"onboarding",icon:"💬",label:"Onboarding"},
+    {id:"onboarding",icon:"💬",label:"AI Inbox",badge:onboardingQueue.length},
     {id:"payments", icon:"💰",label:"Payments"},
     {id:"menu",     icon:"📋",label:"Menu"},
     {id:"settings", icon:"⚙️", label:"Settings"},
@@ -1010,7 +1111,11 @@ function ManagerView(props) {
           return (
             <button key={t.id} onClick={function(){setTab(t.id);}}
               className={"flex-1 flex flex-col items-center py-2 text-[10px] font-semibold gap-0.5 " + (tab===t.id?"text-orange-600 border-b-2 border-orange-600":"text-stone-400 border-b-2 border-transparent")}>
-              <span className="text-sm">{t.icon}</span>{t.label}
+              <span className="text-sm relative">
+                {t.icon}
+                {t.badge > 0 && <span className="absolute -top-1.5 -right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] leading-4">{t.badge}</span>}
+              </span>
+              {t.label}
             </button>
           );
         })}
@@ -1209,36 +1314,48 @@ function ManagerView(props) {
         {tab==="onboarding" && (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
-              <p className="text-xs font-bold text-stone-400 uppercase tracking-wider mb-3">Pending approvals</p>
-              <div className="flex gap-2">
-                <input className={INP + " flex-1"} type="password" inputMode="text" placeholder="Enter manager PIN" value={onboardingQueuePin} onChange={function(e){setOnboardingQueuePin(e.target.value);}} />
-                <button onClick={loadOnboardingQueue} className="px-4 rounded-xl bg-orange-600 text-white font-black text-sm">Load</button>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-stone-400 uppercase tracking-wider">Manager AI Inbox</p>
+                  <p className="text-lg font-black text-stone-800 mt-1">{onboardingQueue.length} pending approval{onboardingQueue.length===1 ? "" : "s"}</p>
+                </div>
+                <button onClick={function(){loadOnboardingQueue();}} disabled={onboardingQueueLoading} className="px-4 py-2.5 rounded-xl bg-orange-600 text-white font-black text-sm disabled:opacity-50">Refresh</button>
               </div>
+              {!managerPin && !managerAuthenticated && (
+                <div className="flex gap-2 mt-3">
+                  <input className={INP + " flex-1"} type="password" inputMode="text" placeholder="Manager PIN" value={onboardingQueuePin} onChange={function(e){setOnboardingQueuePin(e.target.value);}} />
+                  <button onClick={function(){loadOnboardingQueue();}} className="px-4 rounded-xl bg-stone-800 text-white font-black text-sm">Load</button>
+                </div>
+              )}
               {onboardingQueueError && <p className="text-xs text-red-600 font-semibold mt-2">{onboardingQueueError}</p>}
               <p className="text-xs text-stone-400 mt-2">Prompt version: {onboardingPromptVersion}</p>
             </div>
-            {onboardingQueueLoading && <div className="text-center text-stone-400 text-sm py-10">Loading approvals…</div>}
+            {onboardingQueueLoading && <div className="text-center text-stone-400 text-sm py-10">Loading approvals...</div>}
             {!onboardingQueueLoading && onboardingQueue.length===0 && <div className="text-center text-stone-400 text-sm py-10">No pending onboarding approvals.</div>}
             <div className="space-y-3">
               {onboardingQueue.map(function(item) {
+                var draft = item.draft || {};
                 return (
                   <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100 space-y-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-black text-stone-800">{item.draft && item.draft.name ? item.draft.name : "New customer"}</p>
-                        <p className="text-xs text-stone-400 mt-1">{item.draft && item.draft.phone ? item.draft.phone : "No phone"} · {item.source || "chat"}</p>
+                        <p className="font-black text-stone-800">{draft.name || "New customer"}</p>
+                        <p className="text-xs text-stone-400 mt-1">{draft.phone || "No phone"} · {item.source || "chat"}</p>
                       </div>
                       <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">Pending</span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs text-stone-600">
-                      <div className="bg-stone-50 rounded-xl p-2">Plan: <span className="font-bold">{item.draft && item.draft.plan ? item.draft.plan : "-"}</span></div>
-                      <div className="bg-stone-50 rounded-xl p-2">Rate: <span className="font-bold">{item.draft && item.draft.rate ? fmt(item.draft.rate) : "-"}</span></div>
-                      <div className="bg-stone-50 rounded-xl p-2 col-span-2">Address: <span className="font-bold">{item.draft && item.draft.address ? item.draft.address : "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2">Plan: <span className="font-bold">{draft.plan || "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2">Rate: <span className="font-bold">{draft.rate ? fmt(draft.rate) : "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2">Food: <span className="font-bold">{draft.food || "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2">Group: <span className="font-bold">{draft.group || "-"}</span></div>
+                      <div className="bg-stone-50 rounded-xl p-2 col-span-2">Address: <span className="font-bold">{draft.address || "-"}</span></div>
+                      {draft.notes && <div className="bg-stone-50 rounded-xl p-2 col-span-2">Notes: <span className="font-bold">{draft.notes}</span></div>}
                     </div>
                     <textarea className={INP + " resize-none"} rows={2} placeholder="Manager note (optional)" value={onboardingNotes[item.id] || ""} onChange={function(e){setOnboardingNotes(function(prev){var next=Object.assign({}, prev); next[item.id]=e.target.value; return next;});}}></textarea>
                     <div className="flex gap-2">
-                      <button onClick={function(){resolveOnboardingItem(item.id, "reject");}} disabled={onboardingBusyId===item.id} className="flex-1 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 text-sm font-black">Reject</button>
-                      <button onClick={function(){resolveOnboardingItem(item.id, "approve");}} disabled={onboardingBusyId===item.id} className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-black">Approve</button>
+                      <button onClick={function(){resolveOnboardingItem(item.id, "reject");}} disabled={onboardingBusyId===item.id} className="flex-1 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 text-sm font-black disabled:opacity-50">Reject</button>
+                      <button onClick={function(){resolveOnboardingItem(item.id, "approve");}} disabled={onboardingBusyId===item.id} className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-black disabled:opacity-50">Approve</button>
                     </div>
                   </div>
                 );
@@ -1471,6 +1588,7 @@ export default function App() {
   const [onboardingPhone, setOnboardingPhone] = useState("");
 
   const [mgrPinHash, setMgrPinHash] = useState("");
+  const [mgrSessionPin, setMgrSessionPin] = useState("");
 
   const [mgrInput, setMgrInput] = useState("");
   const [mgrErr, setMgrErr] = useState(false);
@@ -1509,108 +1627,111 @@ export default function App() {
   // Lockout error messages
   const [mgrLockMsg, setMgrLockMsg] = useState("");
 
-  // ─── Firebase Anonymous Auth ──────────────────────────────────────────────
+  // ─── Firebase Custom Token Auth ───────────────────────────────────────────
   const [authReady, setAuthReady] = useState(false);
   const [firebaseUid, setFirebaseUid] = useState(null);
+  const [authClaims, setAuthClaims] = useState(null);
+  const [claimRole, setClaimRole] = useState("");
   const [settingsReady, setSettingsReady] = useState(false);
   const [customersReady, setCustomersReady] = useState(false);
 
+  function getRoleFromClaims(claims) {
+    if (!claims) return "";
+    if (claims.manager === true || claims.role === "manager") return "manager";
+    if (claims.role === "customer") return "customer";
+    if (claims.role === "prospect") return "prospect";
+    return "";
+  }
+
+  function applyClaimSession(claims) {
+    const nextRole = getRoleFromClaims(claims);
+    const phone = normalizePhone(claims?.phone || claims?.phone_number || "");
+    setClaimRole(nextRole);
+
+    if (nextRole === "manager") {
+      sessionStorage.setItem("tiffin_role", "manager");
+      setRole("manager");
+      setScreen("app");
+      return;
+    }
+
+    if (nextRole === "customer") {
+      if (phone) {
+        sessionStorage.setItem("tiffin_phone", phone);
+        setCustPhone(phone);
+      }
+      sessionStorage.setItem("tiffin_role", "customer");
+      setRole("customer");
+      setScreen("app");
+      return;
+    }
+
+    if (nextRole === "prospect") {
+      if (phone) {
+        sessionStorage.setItem("tiffin_phone", phone);
+        setOnboardingPhone(phone);
+      }
+      sessionStorage.setItem("tiffin_role", "prospect");
+      setRole(null);
+      setScreen("onboarding");
+    }
+  }
+
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setFirebaseUid(user.uid);
-        setAuthReady(true);
-      } else {
-        // Sign in anonymously — gives every session a real Firebase UID
-        // This is used by Firestore rules to require request.auth != null
-        try {
-          await signInAnonymously(auth);
-        } catch (e) {
-          console.error("Anonymous auth failed:", e);
-          setAuthReady(true); // Still allow app to load in degraded mode
+      try {
+        if (!user) {
+          setFirebaseUid(null);
+          setAuthClaims(null);
+          setClaimRole("");
+          setAuthReady(true);
+          return;
         }
+
+        const tokenResult = await user.getIdTokenResult();
+        const claims = tokenResult.claims || {};
+        setFirebaseUid(user.uid);
+        setAuthClaims(claims);
+        applyClaimSession(claims);
+      } catch (e) {
+        console.error("Firebase auth bridge failed:", e);
+        setFirebaseUid(null);
+        setAuthClaims(null);
+        setClaimRole("");
+      } finally {
+        setAuthReady(true);
       }
     });
     return () => unsubAuth();
   }, []);
 
-  // ─── Secure session restoration — re-verify PIN hash against Firestore ────
-  const sessionRestored = useRef(false);
-
-  useEffect(() => {
-    if (!authReady || !settingsReady || !customersReady || !mgrPinHash || sessionRestored.current) return;
-    sessionRestored.current = true;
-
-    const savedRole = sessionStorage.getItem("tiffin_role");
-    if (!savedRole) return;
-
-    (async () => {
-      if (savedRole === "customer") {
-        const savedPhone = sessionStorage.getItem("tiffin_phone") || "";
-        // Verify the phone still exists in Firestore (don't trust storage alone)
-        if (savedPhone) {
-          const found = cust.find((x) => x.phone === savedPhone);
-          if (found) {
-            setCustPhone(savedPhone);
-            setRole("customer");
-            setScreen("app");
-          } else {
-            // Customer deleted or phone changed — force re-login
-            sessionStorage.removeItem("tiffin_role");
-            sessionStorage.removeItem("tiffin_phone");
-          }
-        }
-      } else if (savedRole === "manager") {
-        const savedPinHash = sessionStorage.getItem("tiffin_pin_hash") || "";
-        if (savedPinHash && savedPinHash === mgrPinHash) {
-          // Hash matches current Firestore hash — session is valid
-          setRole(savedRole);
-          setScreen("app");
-        } else {
-          // Hash mismatch — PIN was changed or storage was tampered
-          sessionStorage.removeItem("tiffin_role");
-          sessionStorage.removeItem("tiffin_pin_hash");
-        }
-      }
-    })();
-  }, [authReady, settingsReady, customersReady, mgrPinHash, cust]);
-
   // ─── Real-time Sync ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!firebaseUid) return; // Wait for anonymous auth before attaching listeners
+    const activeRole = getRoleFromClaims(authClaims);
+    if (!firebaseUid || !activeRole) return;
 
-    // 1. Sync Customers
-    const customersQuery = collection(db, "businesses", BUSINESS_ID, "customers");
-    const unsubscribeCustomers = onSnapshot(customersQuery, (snapshot) => {
-      const list = [];
-      snapshot.forEach((doc) => {
-        const d = doc.data();
-        list.push({
-          id: doc.id,
-          name: d.name,
-          phone: d.phone,
-          address: d.address,
-          plan: d.plan,
-          food: d.food,
-          rate: d.rate,
-          active: d.active,
-          group: d.group || "",
-          deliveryOrder: d.deliveryOrder,
-          resumeDate: d.resumeDate
-        });
-      });
-      setCust(list);
-      setCustomersReady(true);
-    }, (error) => {
-      console.error("Customer sync failed:", error);
-      setCust(SEED_C);
-      setCustomersReady(true);
-    });
+    const unsubscribers = [];
+    const toCustomer = (docSnap) => {
+      const d = docSnap.data();
+      return {
+        id: docSnap.id,
+        name: d.name,
+        phone: d.phone,
+        address: d.address,
+        plan: d.plan,
+        food: d.food,
+        rate: d.rate,
+        active: d.active,
+        group: d.group || "",
+        deliveryOrder: d.deliveryOrder,
+        resumeDate: d.resumeDate,
+        lastReadAt: d.lastReadAt
+      };
+    };
 
-    // 2. Sync Today's Orders
     const dateKey = TODAY;
     const orderDocRef = doc(db, "businesses", BUSINESS_ID, "orders", dateKey);
-    const unsubscribeOrders = onSnapshot(orderDocRef, (snapshot) => {
+    const attachOrders = () => onSnapshot(orderDocRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
         const list = [];
@@ -1629,20 +1750,8 @@ export default function App() {
       }
     });
 
-    // 3. Sync Payments
-    const paymentsQuery = collection(db, "businesses", BUSINESS_ID, "payments");
-    const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
-      const data = {};
-      snapshot.forEach((doc) => {
-        const stateKey = doc.id.replace("_", "-");
-        data[stateKey] = doc.data().records || [];
-      });
-      setPays(data);
-    });
-
-    // 4. Sync Menu
     const menuQuery = collection(db, "businesses", BUSINESS_ID, "menu");
-    const unsubscribeMenu = onSnapshot(menuQuery, (snapshot) => {
+    const attachMenu = () => onSnapshot(menuQuery, (snapshot) => {
       const data = {};
       snapshot.forEach((doc) => {
         data[doc.id] = doc.data().days || [];
@@ -1650,46 +1759,105 @@ export default function App() {
       setMenu(data);
     });
 
-    // 5. Sync Pin Hashes & config
-    const settingsDocRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
-    const unsubscribeSettings = onSnapshot(settingsDocRef, async (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        setMgrPinHash(data.mgrPinHash || "");
-        setWhatsappGroup(data.whatsappGroup || "");
-        setOnboardingPromptVersion(data.onboardingPromptVersion || "onboarding.v1");
-        setSettingsReady(Boolean(data.mgrPinHash));
-      } else {
-        const defaultMgrHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
-        try {
-          await setDoc(settingsDocRef, {
-            mgrPinHash: defaultMgrHash,
-            businessName: "Maa Sharda",
-            onboardingPromptVersion: "onboarding.v1",
-            createdAt: new Date()
-          });
-        } catch (error) {
-          console.error("Settings seed failed:", error);
+    if (activeRole === "manager") {
+      const customersQuery = collection(db, "businesses", BUSINESS_ID, "customers");
+      unsubscribers.push(onSnapshot(customersQuery, (snapshot) => {
+        const list = [];
+        snapshot.forEach((docSnap) => {
+          list.push(toCustomer(docSnap));
+        });
+        setCust(list);
+        setCustomersReady(true);
+      }, (error) => {
+        console.error("Customer sync failed:", error);
+        setCust(SEED_C);
+        setCustomersReady(true);
+      }));
+
+      unsubscribers.push(attachOrders());
+
+      const paymentsQuery = collection(db, "businesses", BUSINESS_ID, "payments");
+      unsubscribers.push(onSnapshot(paymentsQuery, (snapshot) => {
+        const data = {};
+        snapshot.forEach((docSnap) => {
+          const stateKey = docSnap.id.replace("_", "-");
+          data[stateKey] = docSnap.data().records || [];
+        });
+        setPays(data);
+      }));
+
+      unsubscribers.push(attachMenu());
+
+      const settingsDocRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
+      unsubscribers.push(onSnapshot(settingsDocRef, async (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setMgrPinHash(data.mgrPinHash || "");
+          setWhatsappGroup(data.whatsappGroup || "");
+          setOnboardingPromptVersion(data.onboardingPromptVersion || "onboarding.v1");
+          setSettingsReady(Boolean(data.mgrPinHash));
+        } else {
+          const defaultMgrHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+          try {
+            await setDoc(settingsDocRef, {
+              mgrPinHash: defaultMgrHash,
+              businessName: "Maa Sharda",
+              onboardingPromptVersion: "onboarding.v1",
+              createdAt: new Date()
+            });
+          } catch (error) {
+            console.error("Settings seed failed:", error);
+          }
+          setMgrPinHash(defaultMgrHash);
+          setOnboardingPromptVersion("onboarding.v1");
+          setSettingsReady(true);
         }
-        setMgrPinHash(defaultMgrHash);
+      }, (error) => {
+        console.error("Settings sync failed:", error);
+        setMgrPinHash("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
         setOnboardingPromptVersion("onboarding.v1");
         setSettingsReady(true);
+      }));
+    } else if (activeRole === "customer") {
+      const customerId = String(authClaims?.customerId || "");
+      if (!customerId) {
+        setCust([]);
+        setCustomersReady(true);
+        setSettingsReady(true);
+        return;
       }
-    }, (error) => {
-      console.error("Settings sync failed:", error);
-      setMgrPinHash("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
-      setOnboardingPromptVersion("onboarding.v1");
+
+      const customerDocRef = doc(db, "businesses", BUSINESS_ID, "customers", customerId);
+      unsubscribers.push(onSnapshot(customerDocRef, (snapshot) => {
+        setCust(snapshot.exists() ? [toCustomer(snapshot)] : []);
+        setCustomersReady(true);
+      }, (error) => {
+        console.error("Customer profile sync failed:", error);
+        setCust([]);
+        setCustomersReady(true);
+      }));
+
+      unsubscribers.push(attachOrders());
+
+      const paymentDocRef = doc(db, "businesses", BUSINESS_ID, "payments", `${customerId}_${CUR_MON}`);
+      unsubscribers.push(onSnapshot(paymentDocRef, (snapshot) => {
+        setPays(snapshot.exists() ? { [`${customerId}-${CUR_MON}`]: snapshot.data().records || [] } : {});
+      }));
+
+      unsubscribers.push(attachMenu());
       setSettingsReady(true);
-    });
+    } else if (activeRole === "prospect") {
+      setCust([]);
+      setOrds([]);
+      setPays({});
+      setSettingsReady(true);
+      setCustomersReady(true);
+    }
 
     return () => {
-      unsubscribeCustomers();
-      unsubscribeOrders();
-      unsubscribePayments();
-      unsubscribeMenu();
-      unsubscribeSettings();
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [firebaseUid]);
+  }, [firebaseUid, authClaims]);
 
   // ─── Automated System Maintenance (Fallback for Cloud Functions) ───────────
   useEffect(() => {
@@ -1824,57 +1992,89 @@ export default function App() {
       return;
     }
     setMgrLockMsg("");
-    const hashed = await hashPIN(mgrInput);
-    if (hashed !== mgrPinHash) {
-      recordFailedAttempt("tiffin_mgr_lockout", 5, 60000);
-      const ls = checkLockout("tiffin_mgr_lockout");
-      const attemptsLeft = 5 - ls.attempts;
-      setMgrLockMsg(ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : `Incorrect PIN. Please try again. Attempts remaining: ${attemptsLeft}`);
+    try {
+      const result = await createManagerTokenCallable({ pin: mgrInput });
+      const token = result.data?.token;
+      if (!token) throw new Error("Manager token was not returned.");
+      await signInWithCustomToken(auth, token);
+      clearLockout("tiffin_mgr_lockout");
+      setMgrErr(false);
+      setMgrLockMsg("");
+      sessionStorage.setItem("tiffin_role", "manager");
+      sessionStorage.removeItem("tiffin_pin_hash");
+      setMgrSessionPin(mgrInput);
+      setMgrInput("");
+      setRole("manager");
+      setScreen("app");
+    } catch (error) {
+      const isInvalidPin = error?.code === "functions/permission-denied" || error?.details?.code === "INVALID_MANAGER_PIN";
+      if (isInvalidPin) {
+        recordFailedAttempt("tiffin_mgr_lockout", 5, 60000);
+        const ls = checkLockout("tiffin_mgr_lockout");
+        const attemptsLeft = 5 - ls.attempts;
+        setMgrLockMsg(ls.locked ? `Too many attempts. Try again in ${ls.secs}s.` : `Incorrect PIN. Please try again. Attempts remaining: ${attemptsLeft}`);
+      } else {
+        setMgrLockMsg(error.message || "Manager login failed.");
+      }
       setMgrErr(true);
-      return;
     }
-    clearLockout("tiffin_mgr_lockout");
-    setMgrErr(false);
-    setMgrLockMsg("");
-    // Fix 1: Store PIN hash (not plaintext) for secure session restoration
-    sessionStorage.setItem("tiffin_role", "manager");
-    sessionStorage.setItem("tiffin_pin_hash", hashed);
-    setMgrInput("");
-    setRole("manager");
-    setScreen("app");
   }
 
-  function loginCust() {
+  async function loginCust() {
     const now = Date.now();
     if (now < custLockedUntil) {
       const secs = Math.ceil((custLockedUntil - now) / 1000);
       setPhonErr(true);
       return;
     }
-    const ph = phoneInput.trim();
-    const c = cust.find((x) => x.phone === ph);
-    if (!c) {
-      setPhonErr(false);
-      setOnboardingPhone(ph);
-      setScreen("onboarding");
+    const ph = normalizePhone(phoneInput);
+    if (ph.length !== 10) {
+      setPhonErr(true);
       return;
     }
-    setPhonErr(false);
-    setCustAttempts(0);
-    setCustLockedUntil(0);
-    setCustPhone(ph);
-    sessionStorage.setItem("tiffin_role", "customer");
-    sessionStorage.setItem("tiffin_phone", ph);
-    setRole("customer");
-    setScreen("app");
+    try {
+      const result = await createCustomerTokenCallable({ phone: ph });
+      const data = result.data || {};
+      if (!data.token) throw new Error("Customer token was not returned.");
+      await signInWithCustomToken(auth, data.token);
+      setPhonErr(false);
+      setCustAttempts(0);
+      setCustLockedUntil(0);
+      sessionStorage.setItem("tiffin_phone", ph);
+      if (data.role === "customer") {
+        sessionStorage.setItem("tiffin_role", "customer");
+        setCustPhone(ph);
+        setRole("customer");
+        setScreen("app");
+      } else if (data.role === "prospect") {
+        sessionStorage.setItem("tiffin_role", "prospect");
+        setOnboardingPhone(ph);
+        setRole(null);
+        setScreen("onboarding");
+      } else {
+        throw new Error("Unsupported customer identity.");
+      }
+    } catch (error) {
+      console.error("Customer login failed:", error);
+      setPhonErr(true);
+    }
   }
 
-  function logout() {
+  async function logout() {
     sessionStorage.removeItem("tiffin_role");
     sessionStorage.removeItem("tiffin_pin_hash");  // was: tiffin_userpin
     sessionStorage.removeItem("tiffin_phone");
     sessionStorage.removeItem("tiffin_onboard_session");
     sessionStorage.removeItem("tiffin_onboard_draft");
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Firebase sign-out failed:", error);
+    }
+    setFirebaseUid(null);
+    setAuthClaims(null);
+    setClaimRole("");
+    setMgrSessionPin("");
     setRole(null);
     setScreen("roleSelect");
     setPhoneInput("");
@@ -2077,11 +2277,12 @@ export default function App() {
 
   async function updateMgrPin(newPin) {
     try {
-      const newHash = await hashPIN(newPin);
-      if (newHash === mgrPinHash) { alert("New PIN must be different."); return; }
-      const settingsRef = doc(db, "businesses", BUSINESS_ID, "config", "settings");
-      await updateDoc(settingsRef, { mgrPinHash: newHash });
-      // Intentionally NOT storing plaintext PIN; hash stored in Firestore only
+      if (!mgrSessionPin) {
+        alert("Please log out and log back in before changing the manager PIN.");
+        return;
+      }
+      await changePINCallable({ currentPin: mgrSessionPin, newPin, target: "manager" });
+      setMgrSessionPin(newPin);
     } catch (e) {
       console.error(e);
       alert("Error changing manager PIN: " + e.message);
@@ -2151,6 +2352,30 @@ export default function App() {
   const todayMenu = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
   const weekMenu = menu[THIS_WEEK] || null;
 
+  async function openApprovedCustomer(phone) {
+    const ph = normalizePhone(phone);
+    setOnboardingPhone("");
+    setPhoneInput(ph);
+    try {
+      const result = await createCustomerTokenCallable({ phone: ph });
+      const data = result.data || {};
+      if (!data.token || data.role !== "customer") {
+        setScreen("custAuth");
+        return;
+      }
+      await signInWithCustomToken(auth, data.token);
+      setPhonErr(false);
+      setCustPhone(ph);
+      sessionStorage.setItem("tiffin_role", "customer");
+      sessionStorage.setItem("tiffin_phone", ph);
+      setRole("customer");
+      setScreen("app");
+    } catch (error) {
+      console.error("Approved customer bridge failed:", error);
+      setScreen("custAuth");
+    }
+  }
+
   if (screen === "roleSelect") {
     const urlParams = new URLSearchParams(window.location.search);
     const roleParam = urlParams.get("role");
@@ -2198,7 +2423,7 @@ export default function App() {
     return <AuthScreen icon="👤" title="Customer Portal" subtitle="Enter your registered phone number" hdr="bg-green-600" btn="bg-green-600 hover:bg-green-700" value={phoneInput} onChange={setPhoneInput} error={custErrMsg} onBack={function () { setScreen("roleSelect"); setPhonErr(false); setCustAttempts(0); }} onSubmit={loginCust} hint="Use the phone number you gave the business owner" isPhone={true} />;
   }
   if (screen === "onboarding") {
-    return <OnboardingScreen phone={onboardingPhone} onClose={function () { setOnboardingPhone(""); setScreen("custAuth"); }} />;
+    return <OnboardingScreen phone={onboardingPhone} onApproved={openApprovedCustomer} onClose={function () { setOnboardingPhone(""); setScreen("custAuth"); }} />;
   }
 
   // Reset Day confirmation modal (rendered at App level so it works across roles)
@@ -2222,7 +2447,7 @@ export default function App() {
     return (
       <div>
         {resetConfirmModal}
-        <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} setMgrPin={updateMgrPin} whatsappGroup={whatsappGroup} onboardingPromptVersion={onboardingPromptVersion} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} saveOnboardingPromptVersion={async function(version) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { onboardingPromptVersion: version }, { merge: true }); setOnboardingPromptVersion(version); }} logout={logout} />
+        <ManagerView customers={cust} setCustomers={updateCustomersInFirestore} orders={displayOrders} setOrders={async () => {}} payments={pays} menu={menu} setMenuWeek={setMenuWeek} stats={stats} payStats={payStats} getPaid={getPaid} getPayStat={getPayStat} addPayment={addPayment} removePayment={removePayment} onResetDay={onResetDay} advanceStatus={advanceStatus} curMonth={CUR_MON} setMgrPin={updateMgrPin} managerPin={mgrSessionPin} managerAuthenticated={claimRole === "manager"} whatsappGroup={whatsappGroup} onboardingPromptVersion={onboardingPromptVersion} saveWhatsappGroup={async function(link) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { whatsappGroup: link }, { merge: true }); setWhatsappGroup(link); }} saveOnboardingPromptVersion={async function(version) { const docRef = doc(db, "businesses", BUSINESS_ID, "config", "settings"); await setDoc(docRef, { onboardingPromptVersion: version }, { merge: true }); setOnboardingPromptVersion(version); }} logout={logout} />
       </div>
     );
   }

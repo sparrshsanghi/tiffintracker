@@ -1,21 +1,28 @@
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const {FieldValue, Timestamp} = require("firebase-admin/firestore");
 const {
   onboardingSessionsRef,
   approvalsRef,
   auditLogsRef,
   businessRef,
+  BUSINESS_ID,
   settingsRef,
   customersRef,
   db,
 } = require("./helpers/firestore");
 const {verifyManagerPIN, getPINs} = require("./helpers/auth");
+const {generateAuthUid} = require("./identityService");
 
 const DEFAULT_PROMPT_VERSION = "onboarding.v1";
 const SESSION_TTL_HOURS = 24;
 
 function normalizePhone(phone) {
   return String(phone || "").replace(/\D/g, "").slice(-10);
+}
+
+function structuredError(status, code, message, details) {
+  throw new HttpsError(status, message, Object.assign({code}, details || {}));
 }
 
 function toNumber(value) {
@@ -37,6 +44,67 @@ function buildSummary(draft) {
   if (draft.rate) parts.push(`Rate: ₹${draft.rate}`);
   if (draft.notes) parts.push(`Notes: ${draft.notes}`);
   return parts.join("\n");
+}
+
+function getMissingFields(draft) {
+  return ["name", "phone", "address", "plan", "food", "rate"]
+      .filter((key) => {
+        if (key === "phone") return normalizePhone(draft.phone).length !== 10;
+        if (key === "rate") return !(toNumber(draft.rate) > 0);
+        return !draft[key];
+      });
+}
+
+function timestampMillis(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (value.seconds) return value.seconds * 1000;
+  return 0;
+}
+
+async function findExistingCustomerByPhone(phone) {
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone.length !== 10) return null;
+
+  const directSnap = await customersRef().doc(normalizedPhone).get();
+  if (directSnap.exists) {
+    return {id: directSnap.id, data: directSnap.data()};
+  }
+
+  const snap = await customersRef()
+      .where("phone", "==", normalizedPhone)
+      .limit(1)
+      .get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return {id: doc.id, data: doc.data()};
+}
+
+async function rejectExistingCustomerPhone(phone) {
+  const existing = await findExistingCustomerByPhone(phone);
+  if (!existing) return;
+  structuredError("already-exists", "CUSTOMER_PHONE_EXISTS", "Customer already exists for this phone.", {
+    phone: normalizePhone(phone),
+    customerId: existing.id,
+  });
+}
+
+async function findExistingCustomerByPhoneInTransaction(transaction, phone) {
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone.length !== 10) return null;
+
+  const directRef = customersRef().doc(normalizedPhone);
+  const directSnap = await transaction.get(directRef);
+  if (directSnap.exists) {
+    return {id: directSnap.id, data: directSnap.data()};
+  }
+
+  const querySnap = await transaction.get(
+      customersRef().where("phone", "==", normalizedPhone).limit(1),
+  );
+  if (querySnap.empty) return null;
+  const doc = querySnap.docs[0];
+  return {id: doc.id, data: doc.data()};
 }
 
 function buildSystemPrompt(version) {
@@ -102,21 +170,36 @@ async function writeAudit(eventType, data, actor) {
     eventType,
     actor: actor || "system",
     data,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
+}
+
+function hasManagerClaim(request) {
+  const token = request.auth?.token || {};
+  return token.manager === true ||
+    (token.role === "manager" && token.businessId === BUSINESS_ID);
+}
+
+async function verifyManagerAccess(request, pin) {
+  if (hasManagerClaim(request)) return true;
+  if (!pin) return false;
+  return verifyManagerPIN(pin);
 }
 
 async function createOrUpdateSession({sessionId, inputText, extracted, source}) {
   const ref = sessionId ? onboardingSessionsRef().doc(sessionId) : onboardingSessionsRef().doc();
-  const now = admin.firestore.FieldValue.serverTimestamp();
-  const expiresAt = admin.firestore.Timestamp.fromDate(
+  const now = FieldValue.serverTimestamp();
+  const expiresAt = Timestamp.fromDate(
     new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000),
   );
   const snapshot = await ref.get();
   const current = snapshot.exists ? snapshot.data() : {};
   const draft = Object.assign({}, current.draft || {}, extracted || {});
-  const missingFields = ["name", "phone", "address", "plan", "food", "rate"]
-      .filter((key) => !draft[key]);
+  if (draft.phone) {
+    draft.phone = normalizePhone(draft.phone);
+    await rejectExistingCustomerPhone(draft.phone);
+  }
+  const missingFields = getMissingFields(draft);
   const status = missingFields.length === 0 ? "ready_for_confirmation" : "collecting";
 
   await ref.set({
@@ -194,19 +277,19 @@ const saveOnboardingDraft = onCall(async (request) => {
   const mergedDraft = Object.assign({}, current.draft || {}, draft);
   if (mergedDraft.phone) {
     mergedDraft.phone = normalizePhone(mergedDraft.phone);
+    await rejectExistingCustomerPhone(mergedDraft.phone);
   }
   if (mergedDraft.rate !== undefined) {
     mergedDraft.rate = toNumber(mergedDraft.rate);
   }
-  const missingFields = ["name", "phone", "address", "plan", "food", "rate"]
-      .filter((key) => !mergedDraft[key]);
+  const missingFields = getMissingFields(mergedDraft);
   const status = missingFields.length === 0 ? "ready_for_confirmation" : "collecting";
 
   await ref.set({
     draft: mergedDraft,
     missingFields,
     status,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
   }, {merge: true});
 
   await writeAudit("onboarding_draft_saved", {
@@ -224,108 +307,201 @@ const confirmOnboarding = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "sessionId is required.");
   }
 
-  const ref = onboardingSessionsRef().doc(sessionId);
-  const snapshot = await ref.get();
-  if (!snapshot.exists) {
-    throw new HttpsError("not-found", "Onboarding session not found.");
-  }
-
-  const current = snapshot.data();
-  const mergedDraft = Object.assign({}, current.draft || {}, draft || {});
-  mergedDraft.phone = normalizePhone(mergedDraft.phone);
-  mergedDraft.rate = toNumber(mergedDraft.rate);
-
-  const missingFields = ["name", "phone", "address", "plan", "food", "rate"]
-      .filter((key) => !mergedDraft[key]);
-  if (missingFields.length > 0) {
-    throw new HttpsError("failed-precondition", `Missing fields: ${missingFields.join(", ")}`);
-  }
-
-  await ref.set({
-    status: "pending_manager_approval",
-    draft: mergedDraft,
-    missingFields: [],
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, {merge: true});
-
   const approvalRef = approvalsRef().doc();
-  await approvalRef.set({
-    type: "customer_onboarding",
-    sessionId,
-    status: "pending",
-    draft: mergedDraft,
-    source: current.source || "chat",
-    promptVersion: current.promptVersion || DEFAULT_PROMPT_VERSION,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  const result = await db.runTransaction(async (transaction) => {
+    const ref = onboardingSessionsRef().doc(sessionId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) {
+      structuredError("not-found", "ONBOARDING_SESSION_NOT_FOUND", "Onboarding session not found.");
+    }
+
+    const current = snapshot.data();
+    if (["approved", "rejected"].includes(current.status)) {
+      structuredError("failed-precondition", "ONBOARDING_SESSION_RESOLVED", `Onboarding session is already ${current.status}.`, {
+        sessionId,
+        status: current.status,
+      });
+    }
+
+    const existingApprovalsSnap = await transaction.get(
+        approvalsRef().where("sessionId", "==", sessionId),
+    );
+    const pendingApprovals = existingApprovalsSnap.docs
+        .map((doc) => Object.assign({id: doc.id}, doc.data()))
+        .filter((item) => item.status === "pending");
+    if (pendingApprovals.length > 1) {
+      structuredError("failed-precondition", "DUPLICATE_PENDING_APPROVALS", "Multiple pending approvals exist for this onboarding session.", {
+        sessionId,
+        approvalIds: pendingApprovals.map((item) => item.id),
+      });
+    }
+    if (pendingApprovals.length === 1) {
+      const existing = pendingApprovals[0];
+      return {
+        created: false,
+        sessionId,
+        approvalId: existing.id,
+        status: "pending_manager_approval",
+        draft: existing.draft || current.draft || {},
+      };
+    }
+
+    const mergedDraft = Object.assign({}, current.draft || {}, draft || {});
+    mergedDraft.phone = normalizePhone(mergedDraft.phone);
+    mergedDraft.rate = toNumber(mergedDraft.rate);
+
+    const missingFields = getMissingFields(mergedDraft);
+    if (missingFields.length > 0) {
+      structuredError("failed-precondition", "ONBOARDING_MISSING_FIELDS", `Missing fields: ${missingFields.join(", ")}`, {
+        sessionId,
+        missingFields,
+      });
+    }
+
+    const existingCustomer = await findExistingCustomerByPhoneInTransaction(transaction, mergedDraft.phone);
+    if (existingCustomer) {
+      structuredError("already-exists", "CUSTOMER_PHONE_EXISTS", "Customer already exists for this phone.", {
+        phone: mergedDraft.phone,
+        customerId: existingCustomer.id,
+      });
+    }
+
+    transaction.set(ref, {
+      status: "pending_manager_approval",
+      approvalId: approvalRef.id,
+      approvalStatus: "pending",
+      draft: mergedDraft,
+      missingFields: [],
+      updatedAt: FieldValue.serverTimestamp(),
+      confirmedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    transaction.set(approvalRef, {
+      type: "customer_onboarding",
+      sessionId,
+      status: "pending",
+      draft: mergedDraft,
+      source: current.source || "chat",
+      promptVersion: current.promptVersion || DEFAULT_PROMPT_VERSION,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      created: true,
+      sessionId,
+      approvalId: approvalRef.id,
+      status: "pending_manager_approval",
+      draft: mergedDraft,
+    };
   });
 
-  await writeAudit("onboarding_confirmed", {
-    sessionId,
-    approvalId: approvalRef.id,
-  });
+  if (result.created) {
+    await writeAudit("onboarding_confirmed", {
+      sessionId,
+      approvalId: result.approvalId,
+    });
+  }
 
   return {
     sessionId,
-    approvalId: approvalRef.id,
-    status: "pending_manager_approval",
-    summary: buildSummary(mergedDraft),
+    approvalId: result.approvalId,
+    status: result.status,
+    summary: buildSummary(result.draft),
   };
 });
 
 const listOnboardingQueue = onCall(async (request) => {
   const {pin} = request.data || {};
-  if (!pin) {
-    throw new HttpsError("invalid-argument", "pin is required.");
-  }
-  const valid = await verifyManagerPIN(pin);
+  const valid = await verifyManagerAccess(request, pin);
   if (!valid) {
-    throw new HttpsError("permission-denied", "Invalid PIN.");
+    throw new HttpsError("permission-denied", "Manager authorization is required.");
   }
 
   const approvals = await approvalsRef()
       .where("type", "==", "customer_onboarding")
       .where("status", "==", "pending")
-      .orderBy("createdAt", "desc")
       .get();
 
-  const items = approvals.docs.map((doc) => Object.assign({id: doc.id}, doc.data()));
+  const items = approvals.docs
+      .map((doc) => Object.assign({id: doc.id}, doc.data()))
+      .sort((a, b) => timestampMillis(b.createdAt) - timestampMillis(a.createdAt));
   return {items};
 });
 
 const resolveOnboardingApproval = onCall(async (request) => {
   const {pin, approvalId, action, managerNote} = request.data || {};
-  if (!pin || !approvalId || !action) {
-    throw new HttpsError("invalid-argument", "pin, approvalId, and action are required.");
+  if (!approvalId || !action) {
+    throw new HttpsError("invalid-argument", "approvalId and action are required.");
   }
-  const valid = await verifyManagerPIN(pin);
+  const valid = await verifyManagerAccess(request, pin);
   if (!valid) {
-    throw new HttpsError("permission-denied", "Invalid PIN.");
+    throw new HttpsError("permission-denied", "Manager authorization is required.");
   }
 
   if (!["approve", "reject"].includes(action)) {
     throw new HttpsError("invalid-argument", "action must be approve or reject.");
   }
 
-  const approvalRef = approvalsRef().doc(approvalId);
-  const approvalSnap = await approvalRef.get();
-  if (!approvalSnap.exists) {
-    throw new HttpsError("not-found", "Approval not found.");
-  }
+  const resolution = await db.runTransaction(async (transaction) => {
+    const approvalRef = approvalsRef().doc(approvalId);
+    const approvalSnap = await transaction.get(approvalRef);
+    if (!approvalSnap.exists) {
+      structuredError("not-found", "APPROVAL_NOT_FOUND", "Approval not found.");
+    }
 
-  const approval = approvalSnap.data();
-  const sessionRef = onboardingSessionsRef().doc(approval.sessionId);
-  const sessionSnap = await sessionRef.get();
-  const sessionData = sessionSnap.exists ? sessionSnap.data() : {};
+    const approval = approvalSnap.data();
+    if (approval.status === "approved") {
+      if (action === "approve") {
+        return {changed: false, status: "approved", customerId: approval.customerId || ""};
+      }
+      structuredError("failed-precondition", "APPROVAL_ALREADY_APPROVED", "Approval is already approved.", {
+        approvalId,
+        customerId: approval.customerId || "",
+      });
+    }
+    if (approval.status === "rejected") {
+      if (action === "reject") {
+        return {changed: false, status: "rejected"};
+      }
+      structuredError("failed-precondition", "APPROVAL_ALREADY_REJECTED", "Approval is already rejected.", {
+        approvalId,
+      });
+    }
+    if (approval.status !== "pending") {
+      structuredError("failed-precondition", "APPROVAL_NOT_PENDING", `Approval is ${approval.status || "unknown"}.`, {
+        approvalId,
+        status: approval.status || "unknown",
+      });
+    }
 
-  if (action === "approve") {
-    const draft = approval.draft || sessionData.draft || {};
-    const customerRef = customersRef().doc();
-    await db.runTransaction(async (transaction) => {
+    const sessionRef = onboardingSessionsRef().doc(approval.sessionId);
+    const sessionSnap = await transaction.get(sessionRef);
+    const sessionData = sessionSnap.exists ? sessionSnap.data() : {};
+
+    if (action === "approve") {
+      const draft = approval.draft || sessionData.draft || {};
+      const normalizedPhone = normalizePhone(draft.phone);
+      if (normalizedPhone.length !== 10) {
+        structuredError("failed-precondition", "INVALID_CUSTOMER_PHONE", "Customer phone must be a normalized 10-digit number.", {
+          approvalId,
+          phone: normalizedPhone,
+        });
+      }
+      const existingCustomer = await findExistingCustomerByPhoneInTransaction(transaction, normalizedPhone);
+      if (existingCustomer) {
+        structuredError("already-exists", "CUSTOMER_PHONE_EXISTS", "Customer already exists for this phone.", {
+          phone: normalizedPhone,
+          customerId: existingCustomer.id,
+        });
+      }
+      const customerRef = customersRef().doc(normalizedPhone);
       transaction.set(customerRef, {
+        customerId: customerRef.id,
+        authUid: generateAuthUid("customer"),
+        identityLevel: "phone_lookup",
         name: draft.name,
-        phone: normalizePhone(draft.phone),
+        phone: normalizedPhone,
         address: draft.address,
         group: draft.group || "",
         plan: draft.plan,
@@ -335,52 +511,80 @@ const resolveOnboardingApproval = onCall(async (request) => {
         paused: false,
         onboardingSource: approval.source || "chat",
         onboardingSessionId: approval.sessionId,
+        onboardingApprovalId: approvalId,
+        onboardingApprovalStatus: "approved",
         onboardingPromptVersion: approval.promptVersion || DEFAULT_PROMPT_VERSION,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
       transaction.set(approvalRef, {
         status: "approved",
-        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        resolvedAt: FieldValue.serverTimestamp(),
         resolvedBy: "manager",
         managerNote: managerNote || "",
         customerId: customerRef.id,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, {merge: true});
       transaction.set(sessionRef, {
         status: "approved",
+        approvalStatus: "approved",
+        approvalId,
         customerId: customerRef.id,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        managerNote: managerNote || "",
+        resolvedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }, {merge: true});
-    });
 
+      return {
+        changed: true,
+        status: "approved",
+        sessionId: approval.sessionId,
+        customerId: customerRef.id,
+      };
+    }
+
+    transaction.set(approvalRef, {
+      status: "rejected",
+      resolvedAt: FieldValue.serverTimestamp(),
+      resolvedBy: "manager",
+      managerNote: managerNote || "",
+      updatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
+    transaction.set(sessionRef, {
+      status: "rejected",
+      approvalStatus: "rejected",
+      approvalId,
+      managerNote: managerNote || "",
+      resolvedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, {merge: true});
+    return {
+      changed: true,
+      status: "rejected",
+      sessionId: approval.sessionId,
+    };
+  });
+
+  if (resolution.changed && resolution.status === "approved") {
     await writeAudit("onboarding_approved", {
       approvalId,
-      sessionId: approval.sessionId,
-      customerId: customerRef.id,
+      sessionId: resolution.sessionId,
+      customerId: resolution.customerId,
       managerNote: managerNote || "",
     }, "manager");
-
-    return {success: true, status: "approved", customerId: customerRef.id};
+  } else if (resolution.changed && resolution.status === "rejected") {
+    await writeAudit("onboarding_rejected", {
+      approvalId,
+      sessionId: resolution.sessionId,
+      managerNote: managerNote || "",
+    }, "manager");
   }
 
-  await approvalRef.set({
-    status: "rejected",
-    resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
-    resolvedBy: "manager",
-    managerNote: managerNote || "",
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, {merge: true});
-  await sessionRef.set({
-    status: "rejected",
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, {merge: true});
-  await writeAudit("onboarding_rejected", {
-    approvalId,
-    sessionId: approval.sessionId,
-    managerNote: managerNote || "",
-  }, "manager");
-  return {success: true, status: "rejected"};
+  return {
+    success: true,
+    status: resolution.status,
+    customerId: resolution.customerId || null,
+  };
 });
 
 module.exports = {

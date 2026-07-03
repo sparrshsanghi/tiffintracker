@@ -10,6 +10,7 @@
 const {setGlobalOptions} = require("firebase-functions");
 const {confirmPayment} = require("./confirmPayment");
 const {changePIN} = require("./changePIN");
+const {createManagerToken, createCustomerToken} = require("./identityService");
 const {
   startOnboarding,
   saveOnboardingDraft,
@@ -34,6 +35,8 @@ setGlobalOptions({maxInstances: 10});
 module.exports = {
   confirmPayment,
   changePIN,
+  createManagerToken,
+  createCustomerToken,
   startOnboarding,
   saveOnboardingDraft,
   confirmOnboarding,

@@ -1,9 +1,165 @@
-rules_version='2'
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isNonAnonymous() {
+      return isSignedIn()
+        && (!('firebase' in request.auth.token)
+          || request.auth.token.firebase.sign_in_provider != 'anonymous');
+    }
+
+    function isSameBusiness(businessId) {
+      return isNonAnonymous()
+        && request.auth.token.businessId == businessId;
+    }
+
+    function isManager(businessId) {
+      return isSameBusiness(businessId)
+        && (
+          request.auth.token.manager == true
+          || request.auth.token.role == 'manager'
+        );
+    }
+
+    function isCustomer(businessId) {
+      return isSameBusiness(businessId)
+        && request.auth.token.role == 'customer'
+        && request.auth.token.customerId is string;
+    }
+
+    function isProspect(businessId) {
+      return isSameBusiness(businessId)
+        && request.auth.token.role == 'prospect';
+    }
+
+    function ownsPhone(phone) {
+      return isNonAnonymous()
+        && phone != null
+        && (
+          request.auth.token.phone == phone
+          || request.auth.token.phone_number == phone
+        );
+    }
+
+    function ownsCustomerId(businessId, customerId) {
+      return isCustomer(businessId)
+        && request.auth.token.customerId == customerId;
+    }
+
+    function ownsCustomerResource(businessId) {
+      return isCustomer(businessId)
+        && (
+          request.auth.token.customerId == resource.data.customerId
+          || ownsCustomerId(businessId, resource.data.customerId)
+          || ownsPhone(resource.data.phone)
+          || ownsPhone(resource.data.customerPhone)
+        );
+    }
+
+    function canUpdateCustomerReadMarker(businessId, customerId) {
+      return ownsCustomerId(businessId, customerId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastReadAt']);
+    }
+
+    function canReadOnboardingSession(businessId) {
+      return isManager(businessId)
+        || ((isCustomer(businessId) || isProspect(businessId))
+          && ownsPhone(resource.data.draft.phone));
+    }
+
+    function canReadMenu(businessId) {
+      return isManager(businessId)
+        || isCustomer(businessId)
+        || isProspect(businessId);
+    }
+
+    function canReadOrder(businessId) {
+      return isManager(businessId)
+        || isCustomer(businessId);
+    }
+
+    match /businesses/{businessId} {
+      allow read: if isManager(businessId);
+      allow write: if false;
+
+      match /config/{configId} {
+        allow read: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /managers/{managerId} {
+        allow read: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /customers/{customerId} {
+        allow get: if isManager(businessId) || ownsCustomerId(businessId, customerId);
+        allow list: if isManager(businessId);
+        allow create, delete: if false;
+        allow update: if canUpdateCustomerReadMarker(businessId, customerId);
+      }
+
+      match /payments/{paymentId} {
+        allow get: if isManager(businessId) || ownsCustomerResource(businessId);
+        allow list: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /billing/{billingId} {
+        allow get: if isManager(businessId) || ownsCustomerResource(businessId);
+        allow list: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /conversations/{conversationId} {
+        allow get: if isManager(businessId) || ownsCustomerResource(businessId);
+        allow list: if isManager(businessId);
+        allow write: if false;
+
+        match /{conversationDocument=**} {
+          allow read: if isManager(businessId) || ownsCustomerResource(businessId);
+          allow write: if false;
+        }
+      }
+
+      match /notifications/{phone}/messages/{messageId} {
+        allow read: if isManager(businessId) || ownsPhone(phone);
+        allow write: if false;
+      }
+
+      match /onboardingSessions/{sessionId} {
+        allow get: if canReadOnboardingSession(businessId);
+        allow list: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /approvals/{approvalId} {
+        allow read: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /auditLogs/{auditLogId} {
+        allow read: if isManager(businessId);
+        allow write: if false;
+      }
+
+      match /orders/{orderId} {
+        allow read: if canReadOrder(businessId);
+        allow write: if false;
+      }
+
+      match /menu/{menuId} {
+        allow read: if canReadMenu(businessId);
+        allow write: if false;
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
     }
   }
 }
