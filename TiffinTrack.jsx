@@ -42,6 +42,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 const fns = getFunctions(app);
+const confirmPaymentCallable = httpsCallable(fns, "confirmPayment");
 const startOnboardingCallable = httpsCallable(fns, "startOnboarding");
 const saveOnboardingDraftCallable = httpsCallable(fns, "saveOnboardingDraft");
 const confirmOnboardingCallable = httpsCallable(fns, "confirmOnboarding");
@@ -51,6 +52,7 @@ const extractMaaAiIntentCallable = httpsCallable(fns, "extractMaaAiIntent");
 const createMaaAiPendingActionCallable = httpsCallable(fns, "createMaaAiPendingAction");
 const listMaaAiPendingActionsCallable = httpsCallable(fns, "listMaaAiPendingActions");
 const resolveMaaAiPendingActionCallable = httpsCallable(fns, "resolveMaaAiPendingAction");
+const listCustomerTimelineCallable = httpsCallable(fns, "listCustomerTimeline");
 const createManagerTokenCallable = httpsCallable(fns, "createManagerToken");
 const createCustomerTokenCallable = httpsCallable(fns, "createCustomerToken");
 const changePINCallable = httpsCallable(fns, "changePIN");
@@ -1654,6 +1656,8 @@ export default function App() {
   const [pays, setPays] = useState({});
   const [menu, setMenu] = useState({});
   const [notifs, setNotifs] = useState({});
+  const [customerTimeline, setCustomerTimeline] = useState([]);
+  const [customerTimelineLoading, setCustomerTimelineLoading] = useState(false);
   const [custPhone, setCustPhone] = useState("");
   const [whatsappGroup, setWhatsappGroup] = useState("");
   const [onboardingPromptVersion, setOnboardingPromptVersion] = useState("onboarding.v1");
@@ -2058,6 +2062,15 @@ export default function App() {
     return () => unsubscribeNotifications();
   }, [custPhone]);
 
+  useEffect(() => {
+    const customerId = String(authClaims?.customerId || "");
+    if (role !== "customer" || !firebaseUid || !customerId) {
+      setCustomerTimeline([]);
+      return;
+    }
+    loadCustomerTimeline(customerId);
+  }, [role, firebaseUid, authClaims?.customerId]);
+
   // ─── Actions ───────────────────────────────────────────────────────────────
   async function loginMgr() {
     const lockStatus = checkLockout("tiffin_mgr_lockout");
@@ -2154,6 +2167,7 @@ export default function App() {
     setScreen("roleSelect");
     setPhoneInput("");
     setCustPhone("");
+    setCustomerTimeline([]);
     setOnboardingPhone("");
     setMgrInput("");
     setMgrErr(false);
@@ -2225,43 +2239,35 @@ export default function App() {
     const amt = +rawAmt;
     if (!amt || isNaN(amt) || amt <= 0) return;
     try {
-      const monthKey = CUR_MON;
-      const docId = `${cid}_${monthKey}`;
-      const payRef = doc(db, "businesses", BUSINESS_ID, "payments", docId);
-      const recordId = String(Date.now()) + "_" + String(Math.random()).slice(2, 8);
-      const dateLabel = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-      
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(payRef);
-        const existing = snap.exists() ? snap.data() : { totalPaid: 0, records: [] };
-        transaction.set(payRef, {
-          customerId: cid,
-          month: monthKey,
-          totalPaid: (existing.totalPaid || 0) + amt,
-          lastUpdated: new Date(),
-          records: [...(existing.records || []), {
-            id: recordId,
-            amount: amt,
-            date: dateLabel,
-            confirmed: true,
-            recordedAt: new Date()
-          }]
-        }, { merge: true });
-        // Notify customer
-        const c = cust.find((x) => String(x.id) === String(cid));
-        if (c && c.phone) {
-          const notifRef = doc(collection(db, "businesses", BUSINESS_ID, "notifications", c.phone, "messages"));
-          transaction.set(notifRef, {
-            message: `Payment of ₹${amt} recorded for ${monthKey}. Total paid: ₹${(existing.totalPaid || 0) + amt}.`,
-            type: "payment",
-            createdAt: new Date(),
-            read: false
-          });
-        }
+      let pin = mgrSessionPin;
+      if (!pin) {
+        pin = window.prompt("Enter manager PIN to confirm payment:");
+        if (!pin) return;
+      }
+      await confirmPaymentCallable({
+        pin,
+        customerId: String(cid),
+        amount: amt,
       });
+      setMgrSessionPin(pin);
     } catch (e) {
       console.error(e);
       alert("Error confirming payment: " + e.message);
+    }
+  }
+
+  async function loadCustomerTimeline(customerId) {
+    if (!customerId) return;
+    setCustomerTimelineLoading(true);
+    try {
+      const result = await listCustomerTimelineCallable({ customerId: String(customerId) });
+      const items = result.data?.items || [];
+      setCustomerTimeline(items);
+    } catch (error) {
+      console.error("Timeline sync failed:", error);
+      setCustomerTimeline([]);
+    } finally {
+      setCustomerTimelineLoading(false);
     }
   }
 
@@ -2551,6 +2557,11 @@ export default function App() {
         logout={logout}
         todayMenu={todayMenu}
         weekMenu={weekMenu}
+        timeline={customerTimeline}
+        timelineLoading={customerTimelineLoading}
+        loadTimeline={async function() {
+          if (c) await loadCustomerTimeline(c.id);
+        }}
         extractMaaAiIntent={async function(text) {
           if (!c) throw new Error("Customer profile is not ready.");
           const result = await extractMaaAiIntentCallable({ text: text, customerId: c.id });

@@ -13,6 +13,7 @@ const {
 } = require("./helpers/firestore");
 const {verifyManagerPIN, getPINs} = require("./helpers/auth");
 const {generateAuthUid} = require("./identityService");
+const {appendTimelineEvent} = require("./helpers/timeline");
 
 const DEFAULT_PROMPT_VERSION = "onboarding.v1";
 const SESSION_TTL_HOURS = 24;
@@ -540,6 +541,10 @@ const resolveOnboardingApproval = onCall(async (request) => {
         status: "approved",
         sessionId: approval.sessionId,
         customerId: customerRef.id,
+        customerName: draft.name || "",
+        plan: draft.plan || "",
+        food: draft.food || "",
+        rate: toNumber(draft.rate) || 0,
       };
     }
 
@@ -572,6 +577,21 @@ const resolveOnboardingApproval = onCall(async (request) => {
       customerId: resolution.customerId,
       managerNote: managerNote || "",
     }, "manager");
+    await appendTimelineEvent(resolution.customerId, {
+      eventId: `onboarding_${approvalId}`,
+      type: "onboarding_approved",
+      title: "Customer Joined",
+      description: `${resolution.customerName || "Customer"} joined Maa Sharda.`,
+      actor: "manager",
+      source: "onboarding",
+      metadata: {
+        approvalId,
+        sessionId: resolution.sessionId,
+        plan: resolution.plan,
+        food: resolution.food,
+        rate: resolution.rate,
+      },
+    });
   } else if (resolution.changed && resolution.status === "rejected") {
     await writeAudit("onboarding_rejected", {
       approvalId,

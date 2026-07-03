@@ -1,13 +1,14 @@
 const crypto = require("crypto");
 const admin = require("../functions/node_modules/firebase-admin");
+const scheduledTasks = require("../functions/src/scheduledTasks");
 
 const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT || "maa-sharda-sns";
 const businessId = "default";
 const baseUrl = `http://127.0.0.1:5001/${projectId}/us-central1`;
 const pin = "2468";
 const runSuffix = String(Date.now()).slice(-9);
-const customerId = `maa_ai_${runSuffix}`;
 const phone = `9${runSuffix}`.slice(0, 10);
+const customerId = phone;
 const istOffsetMs = 5.5 * 60 * 60 * 1000;
 
 function hashPIN(value) {
@@ -50,6 +51,12 @@ async function callFunction(name, data) {
   return body.result;
 }
 
+async function runMonthlyPaymentInit() {
+  await scheduledTasks.monthlyPaymentInit.run({
+    scheduleTime: new Date().toISOString(),
+  });
+}
+
 async function expectFunctionError(name, data, expectedStatus) {
   const response = await fetch(`${baseUrl}/${name}`, {
     method: "POST",
@@ -79,6 +86,14 @@ async function assertAuditEvent(business, approvalId, eventType) {
   );
 }
 
+async function assertAuditWhere(business, eventType, predicate, message) {
+  const snap = await business.collection("auditLogs")
+      .where("eventType", "==", eventType)
+      .get();
+  const found = snap.docs.map((doc) => doc.data()).some(predicate);
+  assert(found, message || `${eventType} audit log should exist`);
+}
+
 async function notificationCount(business) {
   const snap = await business
       .collection("notifications")
@@ -86,6 +101,61 @@ async function notificationCount(business) {
       .collection("messages")
       .get();
   return snap.size;
+}
+
+async function getTimeline(business, targetCustomerId = customerId) {
+  const snap = await business
+      .collection("customers")
+      .doc(targetCustomerId)
+      .collection("timeline")
+      .orderBy("createdAt", "desc")
+      .get();
+  return snap.docs.map((doc) => Object.assign({id: doc.id}, doc.data()));
+}
+
+function timestampMillis(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (value.seconds) return value.seconds * 1000;
+  return new Date(value).getTime() || 0;
+}
+
+function assertNewestFirst(events) {
+  for (let i = 1; i < events.length; i++) {
+    assert(
+        timestampMillis(events[i - 1].createdAt) >= timestampMillis(events[i].createdAt),
+        "Timeline should be newest first",
+    );
+  }
+}
+
+function assertAppendOnly(before, after) {
+  const afterIds = new Set(after.map((event) => event.id));
+  before.forEach((event) => {
+    assert(afterIds.has(event.id), `Timeline event ${event.id} should not be removed`);
+  });
+}
+
+async function assertTimelineTypeCount(business, type, expected) {
+  const events = await getTimeline(business);
+  const count = events.filter((event) => event.type === type).length;
+  assert(count === expected, `${type} timeline count expected ${expected}, got ${count}`);
+  assertNewestFirst(events);
+  assert(new Set(events.map((event) => event.id)).size === events.length, "Timeline should not contain duplicate event IDs");
+  return events;
+}
+
+async function assertTimelineAddedOnce(business, before, type, title) {
+  const after = await assertTimelineTypeCount(business, type, 1);
+  assertAppendOnly(before, after);
+  assert(after.length === before.length + 1, `${type} should append exactly one timeline event`);
+  const event = after.find((item) => item.type === type);
+  assert(event && event.title === title, `${type} should use title ${title}`);
+  return after;
+}
+
+function currentMonthInIst() {
+  return todayInIst().slice(0, 7);
 }
 
 async function countAiApprovals(business) {
@@ -118,6 +188,57 @@ async function createAction(customerId, text) {
   return {extracted, pending};
 }
 
+async function createOnboardedCustomer(business) {
+  const draft = {
+    name: "Maa AI Regression",
+    phone,
+    address: "Regression House",
+    group: "Regression",
+    plan: "monthly",
+    food: "Veg thali",
+    rate: 2500,
+    notes: "Timeline regression",
+  };
+  const sessionRef = business.collection("onboardingSessions").doc();
+  const approvalRef = business.collection("approvals").doc();
+  await sessionRef.set({
+    status: "pending_manager_approval",
+    approvalStatus: "pending",
+    approvalId: approvalRef.id,
+    draft,
+    missingFields: [],
+    source: "chat",
+    promptVersion: "onboarding.v1",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    confirmedAt: new Date(),
+  });
+  await approvalRef.set({
+    type: "customer_onboarding",
+    sessionId: sessionRef.id,
+    status: "pending",
+    draft,
+    source: "chat",
+    promptVersion: "onboarding.v1",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  const approved = await callFunction("resolveOnboardingApproval", {
+    pin,
+    approvalId: approvalRef.id,
+    action: "approve",
+    managerNote: "Approved by Sprint 2.2 timeline regression",
+  });
+  assert(approved.status === "approved", "Onboarding should approve");
+  assert(approved.customerId === customerId, "Onboarding should create the expected customer");
+  const customerSnap = await business.collection("customers").doc(customerId).get();
+  assert(customerSnap.exists, "Onboarding should create customer document");
+  return {
+    sessionId: sessionRef.id,
+    approvalId: approvalRef.id,
+  };
+}
+
 async function main() {
   if (!process.env.FIRESTORE_EMULATOR_HOST) {
     throw new Error("Run with firebase emulators:exec --only firestore,functions.");
@@ -138,18 +259,20 @@ async function main() {
     geminiApiKey: "",
   }, {merge: true});
 
-  await business.collection("customers").doc(customerId).set({
-    name: "Maa AI Regression",
-    phone,
-    address: "Regression House",
-    group: "Regression",
-    plan: "monthly",
-    food: "Veg thali",
-    rate: 2500,
-    active: true,
-    paused: false,
-    createdAt: new Date(),
-  }, {merge: true});
+  const onboarding = await createOnboardedCustomer(business);
+  let timeline = await assertTimelineTypeCount(business, "onboarding_approved", 1);
+  assert(timeline.length === 1, "Onboarding should create exactly one timeline event");
+  assert(timeline[0].title === "Customer Joined", "Onboarding timeline title should be Customer Joined");
+  const timelineAfterOnboarding = timeline;
+  const approvedAgain = await callFunction("resolveOnboardingApproval", {
+    pin,
+    approvalId: onboarding.approvalId,
+    action: "approve",
+    managerNote: "Idempotent timeline retry",
+  });
+  assert(approvedAgain.status === "approved", "Repeated onboarding approval should be idempotent");
+  timeline = await getTimeline(business);
+  assert(timeline.length === timelineAfterOnboarding.length, "Repeated onboarding approval must not duplicate timeline events");
 
   await business.collection("orders").doc(today).set({
     [customerId]: {
@@ -168,6 +291,7 @@ async function main() {
   assert(unsupported.supported === false, "Unsupported request should be rejected");
   assert(unsupported.message === "This request is not supported yet.", "Unsupported message should be exact");
   assert(await countAiApprovals(business) === startingApprovalCount, "Unsupported request must not create approvals");
+  assert((await getTimeline(business)).length === 1, "Unsupported request must not create timeline events");
 
   const lowConfidence = await callFunction("extractMaaAiIntent", {
     customerId,
@@ -182,6 +306,7 @@ async function main() {
     extraction: lowConfidence.extraction,
   }, "FAILED_PRECONDITION");
   assert(await countAiApprovals(business) === startingApprovalCount, "Low-confidence request must not create approvals");
+  assert((await getTimeline(business)).length === 1, "Low-confidence request must not create timeline events");
 
   const extracted = await callFunction("extractMaaAiIntent", {
     customerId,
@@ -219,6 +344,16 @@ async function main() {
     managerNote: "Approved by Maa AI MVP regression",
   });
   assert(approved.status === "approved", "Pause action should approve");
+  const timelineBeforePauseRetry = await assertTimelineAddedOnce(business, timelineAfterOnboarding, "pause", "Meals Paused");
+  const pauseApprovedAgain = await callFunction("resolveMaaAiPendingAction", {
+    pin,
+    approvalId: pending.approvalId,
+    action: "approve",
+    managerNote: "Idempotent pause retry",
+  });
+  assert(pauseApprovedAgain.status === "approved", "Repeated pause approval should be idempotent");
+  timeline = await getTimeline(business);
+  assert(timeline.length === timelineBeforePauseRetry.length, "Repeated pause approval must not duplicate timeline events");
 
   let customerSnap = await business.collection("customers").doc(customerId).get();
   let customer = customerSnap.data();
@@ -257,6 +392,7 @@ async function main() {
     managerNote: "Resume approved by Maa AI MVP regression",
   });
   assert(resumeApproved.status === "approved", "Resume action should approve");
+  timeline = await assertTimelineAddedOnce(business, timelineBeforePauseRetry, "resume", "Meals Resumed");
 
   customerSnap = await business.collection("customers").doc(customerId).get();
   customer = customerSnap.data();
@@ -282,6 +418,8 @@ async function main() {
     managerNote: "Meal change approved by regression test",
   });
   assert(mealApproved.status === "approved", "Meal change should approve");
+  const timelineAfterResume = timeline;
+  timeline = await assertTimelineAddedOnce(business, timelineAfterResume, "meal_change", "Meal Preference Updated");
   customerSnap = await business.collection("customers").doc(customerId).get();
   customer = customerSnap.data();
   assert(customer.food === "Jain thali", "Approved meal change should update customer food");
@@ -297,14 +435,58 @@ async function main() {
     managerNote: "Address change approved by regression test",
   });
   assert(addressApproved.status === "approved", "Address change should approve");
+  const timelineAfterMeal = timeline;
+  timeline = await assertTimelineAddedOnce(business, timelineAfterMeal, "address_change", "Delivery Address Updated");
   customerSnap = await business.collection("customers").doc(customerId).get();
   customer = customerSnap.data();
   assert(customer.address === "Flat 9, Green Tower", "Approved address change should update customer address");
   await assertAuditEvent(business, address.pending.approvalId, "maa_ai_action_approved");
 
+  const timelineAfterAddress = timeline;
+  const monthKey = currentMonthInIst();
+  await runMonthlyPaymentInit();
+  timeline = await assertTimelineAddedOnce(business, timelineAfterAddress, "monthly_bill_generated", "Monthly Bill Generated");
+  const paymentInitSnap = await business.collection("payments").doc(`${customerId}_${monthKey}`).get();
+  assert(paymentInitSnap.exists, "Monthly billing should create payment document");
+  const paymentInit = paymentInitSnap.data();
+  assert(paymentInit.totalPaid === 0, "Monthly billing should preserve initial totalPaid");
+  assert(Array.isArray(paymentInit.records) && paymentInit.records.length === 0,
+      "Monthly billing should preserve empty records array");
+  assert(!Object.prototype.hasOwnProperty.call(paymentInit, "month"),
+      "Monthly billing should not add a month field");
+  assert(!Object.prototype.hasOwnProperty.call(paymentInit, "customerId"),
+      "Monthly billing should not add a customerId field");
+  const timelineAfterMonthly = timeline;
+  await runMonthlyPaymentInit();
+  timeline = await getTimeline(business);
+  assert(timeline.length === timelineAfterMonthly.length, "Repeated monthly billing must not duplicate timeline events");
+  await assertTimelineTypeCount(business, "monthly_bill_generated", 1);
+
+  const paymentBefore = timeline;
+  const notificationsBeforePayment = await notificationCount(business);
+  const payment = await callFunction("confirmPayment", {
+    pin,
+    customerId,
+    amount: 500,
+    date: `${today}T00:00:00.000Z`,
+  });
+  assert(payment.success === true, "Payment confirmation should succeed");
+  assert(await notificationCount(business) > notificationsBeforePayment, "Payment should notify customer");
+  await assertAuditWhere(
+      business,
+      "payment_received",
+      (item) => item.data &&
+        item.data.customerId === customerId &&
+        item.data.amount === 500 &&
+        item.data.month === monthKey,
+      "Payment should write audit log",
+  );
+  timeline = await assertTimelineAddedOnce(business, paymentBefore, "payment_received", "Payment Received");
+
   const rejectedMeal = await createAction(customerId, "Please change my meal to Roti rice from today.");
   const beforeRejectedMeal = customer.food;
   const notificationsBeforeReject = await notificationCount(business);
+  const timelineBeforeReject = await getTimeline(business);
   const rejected = await callFunction("resolveMaaAiPendingAction", {
     pin,
     approvalId: rejectedMeal.pending.approvalId,
@@ -316,12 +498,31 @@ async function main() {
   customer = customerSnap.data();
   assert(customer.food === beforeRejectedMeal, "Rejected meal change must not update customer food");
   assert(await notificationCount(business) > notificationsBeforeReject, "Rejection should notify customer");
+  timeline = await getTimeline(business);
+  assert(timeline.length === timelineBeforeReject.length, "Rejected action must not create timeline events");
   await assertAuditEvent(business, rejectedMeal.pending.approvalId, "maa_ai_action_rejected");
+
+  const finalTimeline = await getTimeline(business);
+  assert(finalTimeline.length === 7, `Expected 7 relationship timeline events, got ${finalTimeline.length}`);
+  [
+    ["onboarding_approved", 1],
+    ["pause", 1],
+    ["resume", 1],
+    ["meal_change", 1],
+    ["address_change", 1],
+    ["monthly_bill_generated", 1],
+    ["payment_received", 1],
+  ].forEach(([type, expected]) => {
+    const actual = finalTimeline.filter((event) => event.type === type).length;
+    assert(actual === expected, `${type} final count expected ${expected}, got ${actual}`);
+  });
+  assertNewestFirst(finalTimeline);
 
   console.log(JSON.stringify({
     ok: true,
     customerId,
     phone,
+    onboardingApprovalId: onboarding.approvalId,
     pauseApprovalId: pending.approvalId,
     resumeApprovalId: resumePending.approvalId,
     mealApprovalId: meal.pending.approvalId,
@@ -331,6 +532,7 @@ async function main() {
     pauseTo: sunday,
     resumeDate: resumeAfterSunday,
     notificationCount: await notificationCount(business),
+    timelineCount: finalTimeline.length,
   }, null, 2));
 }
 

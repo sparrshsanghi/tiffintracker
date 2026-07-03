@@ -1,6 +1,7 @@
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {db} = require("./helpers/firestore");
 const {FieldValue} = require("firebase-admin/firestore");
+const {appendTimelineEvent} = require("./helpers/timeline");
 
 const BUSINESS_ID = "default";
 
@@ -104,21 +105,42 @@ exports.monthlyPaymentInit = onSchedule({
 
   const batch = db.batch();
   let count = 0;
+  const timelineEvents = [];
 
   activeCustomers.forEach((doc) => {
     const data = doc.data();
     if (data.rate && data.rate > 0) {
+      const paymentId = `${doc.id}_${monthKey}`;
       const paymentRef = db.collection("businesses").doc(BUSINESS_ID)
-          .collection("payments").doc(`${doc.id}_${monthKey}`);
+          .collection("payments").doc(paymentId);
       batch.set(paymentRef, {
         totalPaid: 0,
         records: [],
       }, {merge: true});
+      timelineEvents.push({
+        customerId: doc.id,
+        event: {
+          eventId: `monthly_bill_${monthKey}`,
+          type: "monthly_bill_generated",
+          title: "Monthly Bill Generated",
+          description: `Monthly bill generated for ${monthKey}.`,
+          actor: "system",
+          source: "monthly_billing",
+          metadata: {
+            paymentId,
+            month: monthKey,
+            amount: data.rate,
+          },
+        },
+      });
       count++;
     }
   });
 
   if (count > 0) {
     await batch.commit();
+    await Promise.all(timelineEvents.map((item) =>
+      appendTimelineEvent(item.customerId, item.event),
+    ));
   }
 });

@@ -4,13 +4,16 @@
 
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const {FieldValue} = require("firebase-admin/firestore");
 const {verifyManagerPIN} = require("./helpers/auth");
 const {
   paymentsRef,
+  auditLogsRef,
   getCustomerPhone,
   writeNotification,
 } = require("./helpers/firestore");
 const {formatMonth, monthLabel} = require("./helpers/format");
+const {appendTimelineEvent} = require("./helpers/timeline");
 
 const confirmPayment = onCall(async (request) => {
   const {pin, customerId, amount, date} = request.data;
@@ -50,25 +53,55 @@ const confirmPayment = onCall(async (request) => {
   await docRef.set({
     customerId,
     month: monthKey,
-    totalPaid: admin.firestore.FieldValue.increment(amount),
-    lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-    records: admin.firestore.FieldValue.arrayUnion({
+    totalPaid: FieldValue.increment(amount),
+    lastUpdated: FieldValue.serverTimestamp(),
+    records: FieldValue.arrayUnion({
       id: recordId,
       amount,
       date: dateLabel,
       confirmed: true,
-      recordedAt: admin.firestore.FieldValue.serverTimestamp(),
+      recordedAt: new Date(),
     }),
   }, {merge: true});
 
   // ── Fetch updated total to return to caller ───────────────────────────────
   const snap = await docRef.get();
   const totalPaid = snap.data().totalPaid;
+  const label = monthLabel(monthKey);
+
+  await appendTimelineEvent(customerId, {
+    eventId: `payment_${recordId}`,
+    type: "payment_received",
+    title: "Payment Received",
+    description: `Payment of ₹${amount} received for ${label}.`,
+    actor: "manager",
+    source: "payment_confirmation",
+    metadata: {
+      recordId,
+      paymentId: docId,
+      amount,
+      month: monthKey,
+      totalPaid,
+    },
+  });
+
+  await auditLogsRef().add({
+    eventType: "payment_received",
+    actor: "manager",
+    data: {
+      customerId,
+      paymentId: docId,
+      recordId,
+      amount,
+      month: monthKey,
+      totalPaid,
+    },
+    createdAt: FieldValue.serverTimestamp(),
+  });
 
   // ── Notify customer ───────────────────────────────────────────────────────
   const phone = await getCustomerPhone(customerId);
   if (phone) {
-    const label = monthLabel(monthKey);
     await writeNotification(
         phone,
         `Payment of ₹${amount} recorded for ${label}. ` +

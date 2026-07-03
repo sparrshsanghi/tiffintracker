@@ -11,6 +11,7 @@ const {setGlobalOptions} = require("firebase-functions");
 const {confirmPayment} = require("./confirmPayment");
 const {changePIN} = require("./changePIN");
 const {createManagerToken, createCustomerToken} = require("./identityService");
+const {listCustomerTimeline} = require("./timeline");
 const {
   extractMaaAiIntent,
   createMaaAiPendingAction,
@@ -43,6 +44,7 @@ module.exports = {
   changePIN,
   createManagerToken,
   createCustomerToken,
+  listCustomerTimeline,
   extractMaaAiIntent,
   createMaaAiPendingAction,
   listMaaAiPendingActions,

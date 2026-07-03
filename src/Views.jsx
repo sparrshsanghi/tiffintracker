@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   Package, CheckCircle2,
-  Phone, Bell, UtensilsCrossed
+  Phone, Bell, UtensilsCrossed, Clock3
 } from "lucide-react";
 
 export function BrandLogo({ className = "w-24 h-24" }) {
@@ -41,6 +41,9 @@ export function CustomerView(props) {
   var todayMenu=props.todayMenu, weekMenu=props.weekMenu;
   var extractMaaAiIntent=props.extractMaaAiIntent;
   var confirmMaaAiAction=props.confirmMaaAiAction;
+  var timeline=props.timeline || [];
+  var timelineLoading=props.timelineLoading === true;
+  var loadTimeline=props.loadTimeline;
 
   var tabState = useState("home");
   var tab = tabState[0], setTab = tabState[1];
@@ -85,6 +88,9 @@ export function CustomerView(props) {
   const pauseText = customer.paused || customer.active === false
     ? (customer.pauseTo ? "Meals paused until " + customer.pauseTo : "Meals paused")
     : "";
+  const timelineItems = timeline.slice().sort(function(a, b) {
+    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+  });
 
   function actionLabel(intent) {
     if (intent === "pause_meals") return "Pause Meals";
@@ -108,6 +114,28 @@ export function CustomerView(props) {
     if (extraction.intent === "address_change") return extraction.address || "-";
     if (extraction.intent === "pause_meals") return "Pause meals";
     return "Resume meals";
+  }
+
+  function timelineIcon(type) {
+    if (type === "onboarding_approved") return "✓";
+    if (type === "pause") return "Ⅱ";
+    if (type === "resume") return "▶";
+    if (type === "meal_change") return "🍴";
+    if (type === "address_change") return "⌂";
+    if (type === "payment_received") return "₹";
+    if (type === "monthly_bill_generated") return "Bill";
+    return "•";
+  }
+
+  function timelineDate(value) {
+    if (!value) return "";
+    var date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
   }
 
   async function sendAiMessage() {
@@ -176,9 +204,10 @@ export function CustomerView(props) {
           { id: "menu", label: "Menu" },
           { id: "chat", label: "Chat" },
           { id: "payment", label: "Payment" },
+          { id: "history", label: "History" },
           { id: "alerts", label: "Alerts", badge: unread > 0 },
         ].map(t => (
-          <button key={t.id} onClick={() => { setTab(t.id); if(t.id==="alerts") onRead(); }}
+          <button key={t.id} onClick={() => { setTab(t.id); if(t.id==="alerts") onRead(); if(t.id==="history" && loadTimeline) loadTimeline(); }}
             className={`flex-1 text-xs font-bold py-3 border-b-2 transition-all relative ${tab === t.id ? "border-amber-500 text-amber-600" : "border-transparent text-stone-400"}`}>
             {t.id === "alerts" ? (
               <span className="flex items-center justify-center gap-1">
@@ -363,6 +392,34 @@ export function CustomerView(props) {
                </a>
              )}
            </>
+         )}
+
+         {tab === "history" && (
+           <div className="space-y-3">
+             {timelineLoading && (
+               <div className="bg-white rounded-2xl border border-stone-100 p-5 text-center text-sm font-semibold text-stone-400 shadow-sm">Loading history...</div>
+             )}
+             {!timelineLoading && timelineItems.length === 0 && (
+               <div className="bg-white rounded-2xl border border-stone-100 p-5 text-center text-sm font-semibold text-stone-400 shadow-sm">No history yet.</div>
+             )}
+             {!timelineLoading && timelineItems.map(function(item) {
+               return (
+                 <div key={item.id} className="bg-white rounded-2xl border border-stone-100 p-4 shadow-sm flex gap-3">
+                   <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center text-xs font-black flex-shrink-0">
+                     {timelineIcon(item.type)}
+                   </div>
+                   <div className="flex-1 min-w-0">
+                     <p className="text-sm font-black text-stone-800">{item.title || "Timeline Event"}</p>
+                     <p className="text-sm text-stone-600 mt-1 leading-snug">{item.description || "-"}</p>
+                     <p className="text-xs text-stone-400 mt-2 flex items-center gap-1">
+                       <Clock3 size={12} />
+                       {timelineDate(item.createdAt)}
+                     </p>
+                   </div>
+                 </div>
+               );
+             })}
+           </div>
          )}
 
          {tab === "alerts" && (

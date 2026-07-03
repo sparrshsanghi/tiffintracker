@@ -10,6 +10,7 @@ const {
   writeNotification,
 } = require("./helpers/firestore");
 const {getPINs, verifyManagerPIN} = require("./helpers/auth");
+const {appendTimelineEvent} = require("./helpers/timeline");
 
 const AI_APPROVAL_TYPE = "maa_ai_customer_action";
 const GEMINI_MODEL = "gemini-1.5-flash";
@@ -815,6 +816,74 @@ function buildDecisionMessage(approval, action) {
   return `Your address change request was not approved. Please contact the manager.`;
 }
 
+function buildTimelineEvent(approval, beforeSummary, approvalId) {
+  if (approval.intent === "pause_meals") {
+    return {
+      eventId: `maa_ai_${approvalId}`,
+      type: "pause",
+      title: "Meals Paused",
+      description: `Meals paused from ${formatDate(approval.startDate)} to ${formatDate(approval.endDate)}.`,
+      actor: "manager",
+      source: "maa_ai",
+      metadata: {
+        approvalId,
+        from: approval.startDate || "",
+        to: approval.endDate || "",
+        resumeDate: approval.resumeDate || "",
+      },
+    };
+  }
+
+  if (approval.intent === "resume_meals") {
+    return {
+      eventId: `maa_ai_${approvalId}`,
+      type: "resume",
+      title: "Meals Resumed",
+      description: `Meals resumed from ${formatDate(approval.resumeDate)}.`,
+      actor: "manager",
+      source: "maa_ai",
+      metadata: {
+        approvalId,
+        resumeDate: approval.resumeDate || "",
+      },
+    };
+  }
+
+  if (approval.intent === "meal_change") {
+    const requested = approval.requestedValue || approval.mealPreference || "";
+    return {
+      eventId: `maa_ai_${approvalId}`,
+      type: "meal_change",
+      title: "Meal Preference Updated",
+      description: `Meal preference updated from "${beforeSummary.food || "not set"}" to "${requested}".`,
+      actor: "manager",
+      source: "maa_ai",
+      metadata: {
+        approvalId,
+        from: beforeSummary.food || "",
+        to: requested,
+        effectiveDate: approval.effectiveDate || "",
+      },
+    };
+  }
+
+  const requested = approval.requestedValue || approval.address || "";
+  return {
+    eventId: `maa_ai_${approvalId}`,
+    type: "address_change",
+    title: "Delivery Address Updated",
+    description: `Delivery address updated from "${beforeSummary.address || "not set"}" to "${requested}".`,
+    actor: "manager",
+    source: "maa_ai",
+    metadata: {
+      approvalId,
+      from: beforeSummary.address || "",
+      to: requested,
+      effectiveDate: approval.effectiveDate || "",
+    },
+  };
+}
+
 async function notifyCustomer(customerId, message) {
   const snap = await customersRef().doc(customerId).get();
   if (!snap.exists) return;
@@ -956,6 +1025,12 @@ const resolveMaaAiPendingAction = onCall(async (request) => {
   });
 
   if (resolution.changed) {
+    if (action === "approve") {
+      await appendTimelineEvent(
+          resolution.approval.customerId,
+          buildTimelineEvent(resolution.approval, resolution.beforeSummary, approvalId),
+      );
+    }
     const message = buildDecisionMessage(resolution.approval, action);
     await notifyCustomer(resolution.approval.customerId, message);
     await writeAudit(
