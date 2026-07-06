@@ -8,6 +8,44 @@ export default {
   theme: {
     extend: {
       colors: {
+        background: 'var(--background)',
+        foreground: 'var(--foreground)',
+        card: {
+          DEFAULT: 'var(--card)',
+          foreground: 'var(--card-foreground)',
+        },
+        popover: {
+          DEFAULT: 'var(--popover)',
+          foreground: 'var(--popover-foreground)',
+        },
+        primary: {
+          DEFAULT: 'var(--primary)',
+          foreground: 'var(--primary-foreground)',
+        },
+        secondary: {
+          DEFAULT: 'var(--secondary)',
+          foreground: 'var(--secondary-foreground)',
+        },
+        muted: {
+          DEFAULT: 'var(--muted)',
+          foreground: 'var(--muted-foreground)',
+        },
+        accent: {
+          DEFAULT: 'var(--accent)',
+          foreground: 'var(--accent-foreground)',
+        },
+        destructive: {
+          DEFAULT: 'var(--destructive)',
+          foreground: 'var(--destructive-foreground)',
+        },
+        border: 'var(--border)',
+        input: 'var(--input)',
+        ring: 'var(--ring)',
+        success: {
+          DEFAULT: 'var(--success)',
+          foreground: 'var(--success-foreground)',
+        },
+        gold: 'var(--gold)',
         brand: {
           orange: '#E65100',
           green: '#2E7D32',
@@ -60,8 +98,6 @@ export default {
           900: '#212121',
         },
         blue: {
-          // Replace blue accents with green or orange as per instructions: "Prefer orange + green palette. Never use purple."
-          // But auth screens have blue for delivery person. I'll make it a teal/greenish blue so it's distinct but fits.
           50: '#E0F2F1',
           100: '#B2DFDB',
           200: '#80CBC4',
@@ -72,7 +108,6 @@ export default {
           700: '#00796B',
         },
         purple: {
-          // Removing purple by mapping it to grey/stone or green to ensure it's not used as a bright accent.
           50: '#F5F5F5',
           100: '#EEEEEE',
           200: '#E0E0E0',
@@ -82,6 +117,10 @@ export default {
           600: '#616161',
           700: '#424242',
         }
+      },
+      fontFamily: {
+        sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        serif: ['var(--font-serif)', 'ui-serif', 'Georgia', 'serif'],
       }
     },
   },
