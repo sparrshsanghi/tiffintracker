@@ -44,7 +44,11 @@ export default {
         success: {
           DEFAULT: 'var(--success)',
           foreground: 'var(--success-foreground)',
+          soft: 'var(--success-soft)',
         },
+        'primary-soft': 'var(--primary-soft)',
+        'destructive-soft': 'var(--destructive-soft)',
+        'gold-soft': 'var(--gold-soft)',
         gold: 'var(--gold)',
         brand: {
           orange: '#E65100',

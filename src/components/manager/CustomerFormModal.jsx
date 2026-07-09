@@ -14,10 +14,10 @@ export function CustomerFormModal({
   if (!showForm) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={function(e){if(e.target===e.currentTarget)setShowForm(false);}}>
-      <div className="bg-white rounded-t-3xl p-5 w-full max-w-lg mx-auto max-h-[90vh] overflow-y-auto">
-        <div className="w-12 h-1.5 bg-stone-200 rounded-full mx-auto mb-4"></div>
-        <h2 className="text-lg font-black text-stone-800 mb-4">{editId?"✏️ Edit Customer":"➕ New Customer"}</h2>
+    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-end" onClick={function(e){if(e.target===e.currentTarget)setShowForm(false);}}>
+      <div className="mgr-card rounded-t-3xl rounded-b-none p-5 w-full max-w-lg mx-auto max-h-[90vh] overflow-y-auto enter-up">
+        <div className="w-12 h-1.5 bg-muted rounded-full mx-auto mb-4"></div>
+        <h2 className="text-lg font-black text-foreground mb-4">{editId?"✏️ Edit Customer":"➕ New Customer"}</h2>
         <div className="space-y-3">
           {[
             {k:"name",   l:"Name *",          p:"Full name",               m:"text"},
@@ -30,19 +30,19 @@ export function CustomerFormModal({
           ].map(function(f){
             return (
               <div key={f.k}>
-                <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">{f.l}</label>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wide">{f.l}</label>
                 <input className={INP+" mt-1"} placeholder={f.p} inputMode={f.m} value={form[f.k]}
                   onChange={function(e){var v=e.target.value;setForm(function(p){var n=Object.assign({},p);n[f.k]=v;return n;});}}/>
               </div>
             );
           })}
           <div>
-            <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">Plan Type</label>
+            <label className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Plan Type</label>
             <div className="flex gap-2 mt-1">
               {["daily","monthly"].map(function(pl){
                 return (
                   <button key={pl} onClick={function(){setForm(function(p){return Object.assign({},p,{plan:pl});});}}
-                    className={"flex-1 py-3 rounded-xl text-sm font-black border-2 transition-colors " + (form.plan===pl?(pl==="daily"?"bg-blue-600 text-white border-blue-600":"bg-purple-600 text-white border-purple-600"):"bg-white text-stone-400 border-stone-200")}>
+                    className={"flex-1 py-3 rounded-xl text-sm font-black border-2 transition-colors mgr-press " + (form.plan===pl?(pl==="daily"?"bg-[oklch(0.6_0.15_250)] text-white border-[oklch(0.6_0.15_250)]":"bg-[oklch(0.55_0.15_300)] text-white border-[oklch(0.55_0.15_300)]"):"bg-card text-muted-foreground border-border")}>
                     {pl==="daily"?"🔄 Daily":"📅 Monthly"}
                   </button>
                 );
@@ -50,7 +50,7 @@ export function CustomerFormModal({
             </div>
           </div>
           <div>
-            <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">Pause Delivery?</label>
+            <label className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Pause Delivery?</label>
             <select className={INP+" mt-1"} value={form.paused ? "yes" : "no"} onChange={e => setForm(p => Object.assign({}, p, {paused: e.target.value === "yes"}))}>
               <option value="no">No</option>
               <option value="yes">Yes</option>
@@ -59,19 +59,19 @@ export function CustomerFormModal({
           {form.paused && (
             <div className="flex gap-2 mt-2">
               <div className="flex-1">
-                <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">From Date</label>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wide">From Date</label>
                 <input type="date" className={INP+" mt-1"} value={form.pauseFrom} onChange={e => setForm(p => Object.assign({}, p, {pauseFrom: e.target.value}))} />
               </div>
               <div className="flex-1">
-                <label className="text-xs font-bold text-stone-400 uppercase tracking-wide">To Date</label>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wide">To Date</label>
                 <input type="date" className={INP+" mt-1"} value={form.pauseTo} onChange={e => setForm(p => Object.assign({}, p, {pauseTo: e.target.value}))} />
               </div>
             </div>
           )}
         </div>
         <div className="flex gap-3 mt-5">
-          <button onClick={function(){setShowForm(false);}} className="flex-1 py-3.5 border-2 border-stone-200 rounded-2xl text-stone-600 font-bold">Cancel</button>
-          <button onClick={save} className="flex-1 py-3.5 bg-orange-600 text-white rounded-2xl font-black disabled:opacity-40">{editId?"Save Changes":"Add Customer"}</button>
+          <button onClick={function(){setShowForm(false);}} className="flex-1 py-3.5 border-2 border-border rounded-2xl text-muted-foreground font-bold mgr-press bg-card">Cancel</button>
+          <button onClick={save} className="flex-1 py-3.5 mgr-btn-primary rounded-2xl font-black disabled:opacity-40 mgr-press">{editId?"Save Changes":"Add Customer"}</button>
         </div>
       </div>
     </div>

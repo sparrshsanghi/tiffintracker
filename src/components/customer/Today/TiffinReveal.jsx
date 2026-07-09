@@ -95,7 +95,7 @@ export function TiffinReveal({ heroSrc, heroAlt, phase = "open" }) {
         />
         <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent px-5 pb-4 pt-12">
           <p className="font-serif text-lg font-medium text-white text-balance">
-            Fresh from Maa's kitchen, still warm
+            Fresh from Maa&apos;s kitchen, still warm
           </p>
         </figcaption>
       </figure>

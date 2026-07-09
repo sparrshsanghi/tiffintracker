@@ -1,5 +1,17 @@
 module.exports = {
   env: { browser: true, es2020: true },
+  ignorePatterns: [
+    'functions/',
+    'index.js',
+    'firestore.js',
+    'scripts/',
+    'dist/',
+    'node_modules/',
+    'postcss.config.js',
+    'tailwind.config.js',
+    'vite.config.js',
+    'eslintrc.js',
+  ],
   extends: [
     'eslint:recommended',
     'plugin:react/recommended',

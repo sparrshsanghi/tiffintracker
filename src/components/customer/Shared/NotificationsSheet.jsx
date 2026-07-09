@@ -82,7 +82,7 @@ export function NotificationsSheet({ notifs, onClose, loading = false }) {
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary text-primary border border-border">
                 <Bell size={24} />
               </div>
-              <p className="mt-4 font-serif text-base font-semibold text-foreground">We'll let you know when today's meal is ready.</p>
+              <p className="mt-4 font-serif text-base font-semibold text-foreground">We&apos;ll let you know when today&apos;s meal is ready.</p>
               <p className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">Lunch notes, payment updates, pauses, and delivery messages will arrive here with a familiar WhatsApp-style rhythm.</p>
             </div>
           ) : sectionOrder.map((section) => {

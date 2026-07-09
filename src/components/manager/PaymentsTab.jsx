@@ -45,23 +45,23 @@ export function PaymentsTab({
   return (
     <div className="space-y-4">
       {/* Month selector */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+      <div className="mgr-card p-4">
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={function () { setPayMonth(prevMon(payMonth)); }}
-            className="w-10 h-10 rounded-xl bg-stone-50 text-stone-600 font-black text-xl flex items-center justify-center"
+            className="w-10 h-10 rounded-xl bg-secondary text-foreground font-black text-xl flex items-center justify-center mgr-press"
             aria-label="Previous month"
           >
             &#8249;
           </button>
           <div className="text-center">
-            <p className="font-black text-stone-800">{monLabel(payMonth)}</p>
-            {payMonth === curMonth && <span className="text-xs text-orange-600 font-bold">Current Month</span>}
+            <p className="font-black text-foreground">{monLabel(payMonth)}</p>
+            {payMonth === curMonth && <span className="text-xs text-primary font-bold">Current Month</span>}
           </div>
           <button
             onClick={function () { if (payMonth < curMonth) setPayMonth(nextMon(payMonth)); }}
             disabled={payMonth >= curMonth}
-            className={"w-10 h-10 rounded-xl font-black text-xl flex items-center justify-center " + (payMonth >= curMonth ? "bg-stone-100 text-stone-300 cursor-not-allowed" : "bg-stone-50 text-stone-600")}
+            className={"w-10 h-10 rounded-xl font-black text-xl flex items-center justify-center mgr-press " + (payMonth >= curMonth ? "bg-muted text-muted-foreground cursor-not-allowed" : "bg-secondary text-foreground")}
             aria-label={payMonth >= curMonth ? "No future months" : "Next month"}
           >
             &#8250;
@@ -70,17 +70,17 @@ export function PaymentsTab({
 
         {/* Stats */}
         <div className="flex items-end justify-between">
-          <div><p className="text-3xl font-black text-stone-800">{fmt(pmStats.col)}</p><p className="text-xs text-stone-400">of {fmt(pmStats.due)}</p></div>
+          <div><p className="text-3xl font-black text-foreground">{fmt(pmStats.col)}</p><p className="text-xs text-muted-foreground">of {fmt(pmStats.due)}</p></div>
           <div className="flex gap-2">
-            <div className="text-center bg-green-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-green-700">{pmStats.nP}</div><div className="text-xs text-green-600 font-bold">Paid</div></div>
-            {pmStats.nPart > 0 && <div className="text-center bg-amber-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-amber-700">{pmStats.nPart}</div><div className="text-xs text-amber-600 font-bold">Part</div></div>}
-            <div className="text-center bg-red-50 rounded-xl px-3 py-2"><div className="text-xl font-black text-red-700">{pmStats.nU}</div><div className="text-xs text-red-600 font-bold">Unpaid</div></div>
+            <div className="text-center bg-[oklch(0.95_0.05_148)] rounded-xl px-3 py-2"><div className="text-xl font-black text-success">{pmStats.nP}</div><div className="text-xs text-success font-bold">Paid</div></div>
+            {pmStats.nPart > 0 && <div className="text-center bg-[oklch(0.95_0.06_78)] rounded-xl px-3 py-2"><div className="text-xl font-black text-[oklch(0.65_0.13_75)]">{pmStats.nPart}</div><div className="text-xs text-[oklch(0.58_0.13_75)] font-bold">Part</div></div>}
+            <div className="text-center bg-[oklch(0.97_0.03_27)] rounded-xl px-3 py-2"><div className="text-xl font-black text-destructive">{pmStats.nU}</div><div className="text-xs text-destructive font-bold">Unpaid</div></div>
           </div>
         </div>
-        <div className="mt-3 h-2.5 bg-stone-100 rounded-full overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-green-400 to-emerald-500 rounded-full" style={{ width: pmStats.pct + "%" }}></div>
+        <div className="mt-3 mgr-track h-2.5">
+          <div className="mgr-fill h-full" style={{ width: pmStats.pct + "%" }}></div>
         </div>
-        <p className="text-xs text-stone-400 mt-1 text-right">{pmStats.pct}% · {fmt(pmStats.due - pmStats.col)} remaining</p>
+        <p className="text-xs text-muted-foreground mt-1 text-right">{pmStats.pct}% · {fmt(pmStats.due - pmStats.col)} remaining</p>
       </div>
 
       {/* Filter pills */}
@@ -91,7 +91,7 @@ export function PaymentsTab({
             <button
               key={f}
               onClick={function () { setPayFilter(f); }}
-              className={"flex-1 py-2 rounded-xl text-xs font-bold " + (payFilter === f ? "bg-orange-600 text-white" : "bg-white text-stone-500 border border-stone-200")}
+              className={"flex-1 py-2 rounded-xl text-xs font-bold mgr-press " + (payFilter === f ? "mgr-btn-primary" : "bg-card text-muted-foreground border border-border")}
               aria-pressed={payFilter === f}
             >
               {label}
@@ -115,7 +115,7 @@ export function PaymentsTab({
         var records = payments[c.id + "-" + payMonth] || [];
         var isCur = payMonth === curMonth;
         return (
-          <div key={c.id} className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
+          <div key={c.id} className="mgr-card mgr-card-hover overflow-hidden">
             <div className="p-4">
               <div className="flex justify-between items-start">
                 <div>
@@ -128,11 +128,11 @@ export function PaymentsTab({
               {/* Progress bar */}
               <div className="mt-3">
                 <div className="flex justify-between text-xs mb-1.5">
-                  <span className="font-bold text-stone-600">Paid: {fmt(paid)}</span>
-                  {remaining > 0 && <span className="font-bold text-red-500">Due: {fmt(remaining)}</span>}
+                  <span className="font-bold text-foreground">Paid: {fmt(paid)}</span>
+                  {remaining > 0 && <span className="font-bold text-destructive">Due: {fmt(remaining)}</span>}
                 </div>
-                <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-green-400 rounded-full" style={{ width: Math.min(100, Math.round(paid / c.rate * 100)) + "%" }}></div>
+                <div className="mgr-track h-2">
+                  <div className="mgr-fill h-full" style={{ width: Math.min(100, Math.round(paid / c.rate * 100)) + "%" }}></div>
                 </div>
               </div>
 

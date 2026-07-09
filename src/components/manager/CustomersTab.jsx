@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { getDefaultFood } from "../customer/customerUtils.js";
 import { INP, fmt, waTo, TODAY } from "./managerUtils.js";
 
@@ -16,26 +16,29 @@ export function CustomersTab({
   // pauseTarget: { c, pauseFrom, pauseTo } — the customer being paused inline
   const [pauseTarget, setPauseTarget] = useState(null);
 
-  const filteredC = customers.filter(function (c) {
-    var q = search.toLowerCase();
-    return c.name.toLowerCase().includes(q) || c.phone.includes(search) || c.address.toLowerCase().includes(q);
-  });
+  const { groups, hasResults } = React.useMemo(() => {
+    const fc = customers.filter((c) => {
+      const q = search.toLowerCase();
+      return c.name.toLowerCase().includes(q) || c.phone.includes(search) || c.address.toLowerCase().includes(q);
+    });
+    
+    const grps = {
+      "Monthly - Jain": [],
+      "Monthly - Normal": [],
+      "Daily - Jain": [],
+      "Daily - Normal": [],
+    };
+    
+    fc.forEach((c) => {
+      const plan = c.plan === "monthly" ? "Monthly" : "Daily";
+      const foodType = (c.food || "").toLowerCase().includes("jain") ? "Jain" : "Normal";
+      const groupName = plan + " - " + foodType;
+      if (grps[groupName]) grps[groupName].push(c);
+    });
 
-  var groups = {
-    "Monthly - Jain": [],
-    "Monthly - Normal": [],
-    "Daily - Jain": [],
-    "Daily - Normal": [],
-  };
+    return { groups: grps, hasResults: fc.length > 0 };
+  }, [customers, search]);
 
-  filteredC.forEach(function (c) {
-    var plan = c.plan === "monthly" ? "Monthly" : "Daily";
-    var foodType = (c.food || "").toLowerCase().includes("jain") ? "Jain" : "Normal";
-    var groupName = plan + " - " + foodType;
-    if (groups[groupName]) groups[groupName].push(c);
-  });
-
-  const hasAnyGroup = Object.values(groups).some(function(g) { return g.length > 0; });
 
   function handlePauseClick(c) {
     if (c.active !== false && !c.paused) {
@@ -104,10 +107,10 @@ export function CustomersTab({
       )}
 
       {/* Search returned nothing */}
-      {customers.length > 0 && search.trim() !== "" && !hasAnyGroup && (
+      {customers.length > 0 && search.trim() !== "" && !hasResults && (
         <div className="text-center py-12">
           <div className="text-4xl mb-3">🔍</div>
-          <p className="font-black text-stone-700">No results for "{search}"</p>
+          <p className="font-black text-stone-700">No results for &quot;{search}&quot;</p>
           <p className="text-sm text-stone-400 mt-1">Try searching by name, phone, or address.</p>
         </div>
       )}
@@ -117,14 +120,14 @@ export function CustomersTab({
         if (cList.length === 0) return null;
         return (
           <div key={gName} className="mt-6 first:mt-2">
-            <h3 className="text-xs font-black text-stone-400 tracking-wider uppercase mb-3 flex items-center gap-2">
-              {gName.includes("Jain") ? "🌿" : "🍛"} {gName} <span className="bg-stone-200 text-stone-500 px-2 py-0.5 rounded-full">{cList.length}</span>
+            <h3 className="text-xs font-black text-muted-foreground tracking-wider uppercase mb-3 flex items-center gap-2">
+              {gName.includes("Jain") ? "🌿" : "🍛"} {gName} <span className="bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">{cList.length}</span>
             </h3>
             <div className="space-y-3">
               {cList.map(function (c) {
                 const hasNoRate = !c.rate || c.rate <= 0;
                 return (
-                  <div key={c.id} className={"bg-white rounded-2xl p-4 shadow-sm border " + (hasNoRate ? "border-amber-200" : (c.active ? "border-stone-100" : "border-stone-200 opacity-60"))}>
+                  <div key={c.id} className={"mgr-card mgr-card-hover p-4 " + (!c.active ? "opacity-60" : "") + (hasNoRate ? " border-l-4 border-l-[oklch(0.76_0.125_82)]" : "")}>
                     <div className="flex gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">

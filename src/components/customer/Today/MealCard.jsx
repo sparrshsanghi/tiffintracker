@@ -1,4 +1,5 @@
 import { Leaf } from "lucide-react";
+import { motion } from "framer-motion";
 import { TodayMealSkeleton } from "../Shared/Skeletons";
 
 export function MealCard({ mealItems, mealLoading, isEmptyMeal, note }) {
@@ -21,10 +22,10 @@ export function MealCard({ mealItems, mealLoading, isEmptyMeal, note }) {
   });
 
   return (
-    <section aria-labelledby="todays-meal" className="mx-5 bg-card text-card-foreground border border-border p-5 rounded-3xl shadow-sm">
+    <motion.section layoutId="tiffin-morph" aria-labelledby="todays-meal" className="mx-5 bg-card text-card-foreground border border-border p-5 rounded-3xl shadow-sm">
       <div className="flex items-baseline justify-between gap-3">
         <h2 id="todays-meal" className="font-serif text-xl font-semibold text-foreground">
-          Today's Lunch
+          Today&apos;s Lunch
         </h2>
         <span className="flex items-center gap-1 text-xs font-medium text-success">
           <Leaf className="size-3.5" strokeWidth={2} aria-hidden />
@@ -58,6 +59,6 @@ export function MealCard({ mealItems, mealLoading, isEmptyMeal, note }) {
           ))}
         </ul>
       )}
-    </section>
+    </motion.section>
   );
 }

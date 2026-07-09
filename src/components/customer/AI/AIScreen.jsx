@@ -87,7 +87,7 @@ export function AIScreen({ aiMessages, aiDraft, aiPending, aiBusy, aiErr, aiInpu
           </div>
           <div className="flex items-start gap-2.5">
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-bold text-primary">3</span>
-            <p className="text-sm">Confirm and the request is instantly updated on your manager's dashboard.</p>
+            <p className="text-sm">Confirm and the request is instantly updated on your manager&apos;s dashboard.</p>
           </div>
         </div>
       </section>

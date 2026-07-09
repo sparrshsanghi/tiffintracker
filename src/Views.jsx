@@ -13,6 +13,9 @@ import { ProfileScreen } from "./components/customer/Profile/ProfileScreen";
 import { NotificationsSheet } from "./components/customer/Shared/NotificationsSheet";
 import { ProfileLoadingSkeleton } from "./components/customer/Shared/Skeletons";
 import { TodayScreen } from "./components/customer/Today/TodayScreen";
+import { LoadingScreen } from "./components/loading";
+import { AnimatePresence, LayoutGroup } from "framer-motion";
+import { getInitialState, processMessage } from "./utils/ai/ConversationManager";
 import {
   firstName,
   getDeliveryCopy,
@@ -62,6 +65,7 @@ export function CustomerView(props) {
 
   const [tab, setTab] = useState("today");
   const [showNotifications, setShowNotifications] = useState(false);
+  const [aiState, setAiState] = useState(() => getInitialState());
   const [aiMessages, setAiMessages] = useState([
     { role: "assistant", text: "Hi Maa. Tell me what you need in your own words and I will understand it.", time: Date.now() },
   ]);
@@ -70,6 +74,7 @@ export function CustomerView(props) {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState("");
   const [aiPending, setAiPending] = useState("");
+  const [animationFinished, setAnimationFinished] = useState(false);
 
   const meal = getMealPresentation(todayMenu, customer);
   const delivStatus = order ? order.status : "pending";
@@ -103,6 +108,8 @@ export function CustomerView(props) {
     return <ProfileLoadingSkeleton />;
   }
 
+  const isFullyLoaded = !customerLoading && !notificationsLoading;
+
   if (!customer) {
     return (
       <div className="min-h-screen bg-[#f7f1e7] flex flex-col items-center justify-center p-6 text-center text-stone-900" style={{ fontFamily: "system-ui,sans-serif" }}>
@@ -118,28 +125,41 @@ export function CustomerView(props) {
   async function sendAiMessage(textOverride) {
     const text = String(textOverride || aiInput).trim();
     if (!text || aiBusy || !extractMaaAiIntent) return;
-    const userTime = Date.now();
     setAiBusy(true);
     setAiErr("");
     setAiPending("");
-    setAiDraft(null);
-    setAiMessages((prev) => prev.concat([{ role: "user", text, time: userTime }]));
+
+    const context = {
+      rate: customer?.rate || 0,
+      paid: paid || 0,
+      payStatus: props.payStatus || "unpaid",
+      curMonLabel: curMonLabel || "this month",
+      customer: customer || {},
+    };
+
     try {
-      const result = await extractMaaAiIntent(text);
-      if (!result || result.supported === false) {
-        setAiMessages((prev) => prev.concat([{ role: "assistant", text: (result && result.message) || "This request is not supported yet.", time: Date.now() }]));
-        return;
+      const result = await processMessage(text, aiState, context, extractMaaAiIntent);
+      setAiState(result.state);
+      setAiMessages(result.state.history);
+
+      if (result.draft) {
+        const draft = Object.assign({}, result.draft, {
+          originalText: text,
+        });
+        setAiDraft(draft);
       }
-      if (result.needsClarification) {
-        setAiMessages((prev) => prev.concat([{ role: "assistant", text: result.clarificationQuestion || "Please clarify this request.", time: Date.now() }]));
-        return;
+
+      if (result.clearDraft) {
+        setAiDraft(null);
       }
-      const draft = Object.assign({}, result.extraction, {
-        originalText: text,
-        confirmationText: result.confirmationText,
-      });
-      setAiDraft(draft);
-      setAiMessages((prev) => prev.concat([{ role: "assistant", text: result.confirmationText || "Please confirm this request.", time: Date.now() }]));
+
+      if (result.submitDraft && confirmMaaAiAction) {
+        const confirmResult = await confirmMaaAiAction({
+          text: text,
+          extraction: result.submitDraft,
+        });
+        setAiPending((confirmResult && confirmResult.approvalId) || "pending");
+      }
     } catch (error) {
       setAiErr(error.message || "Could not understand that message.");
     } finally {
@@ -154,12 +174,13 @@ export function CustomerView(props) {
     setAiErr("");
     try {
       const result = await confirmMaaAiAction({
-        text: aiDraft.originalText,
+        text: aiDraft.originalText || "Confirmed via card",
         extraction: aiDraft,
       });
       setAiPending((result && result.approvalId) || "pending");
       setAiMessages((prev) => prev.concat([{ role: "assistant", text: (result && result.customerMessage) || "Sent to the manager for approval.", time: Date.now() }]));
       setAiDraft(null);
+      setAiState((prev) => ({ ...prev, activeTask: null, entities: {}, pendingConfirmation: false, extractedDraft: null }));
     } catch (error) {
       setAiErr(error.message || "Could not send this for approval.");
     } finally {
@@ -187,7 +208,16 @@ export function CustomerView(props) {
   const cn = (...classes) => classes.filter(Boolean).join(' ');
 
   return (
-    <div className="customer-shell min-h-screen bg-background text-foreground flex flex-col mx-auto max-w-md w-full relative shadow-2xl border-x border-border pb-24" style={{ fontFamily: "var(--font-sans)" }}>
+    <LayoutGroup>
+      <AnimatePresence mode="wait">
+        {!animationFinished ? (
+          <LoadingScreen 
+            key="loader"
+            isLoaded={isFullyLoaded} 
+            onSequenceComplete={() => setAnimationFinished(true)} 
+          />
+        ) : (
+          <div key="app-shell" className="customer-shell min-h-screen bg-background text-foreground flex flex-col mx-auto max-w-md w-full relative shadow-2xl border-x border-border pb-24" style={{ fontFamily: "var(--font-sans)" }}>
       <header className="flex items-start justify-between gap-4 px-5 pt-5 pb-3">
         <div className="min-w-0">
           <p className="text-[10px] font-black uppercase tracking-[0.24em] text-primary">Maa Sharda</p>
@@ -248,7 +278,10 @@ export function CustomerView(props) {
             setAiInput={setAiInput}
             sendAiMessage={sendAiMessage}
             confirmAiDraft={confirmAiDraft}
-            clearAiDraft={() => setAiDraft(null)}
+            clearAiDraft={() => {
+              setAiDraft(null);
+              setAiState((prev) => ({ ...prev, activeTask: null, entities: {}, pendingConfirmation: false, extractedDraft: null }));
+            }}
           />
         )}
 
@@ -276,35 +309,32 @@ export function CustomerView(props) {
         aria-label="Main"
         className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm"
       >
-        <div className="mx-auto flex max-w-md items-stretch justify-around">
+        <div className="flex h-full w-full max-w-md items-center justify-around">
           {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = tab === item.id;
+            const isActive = tab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => setTab(item.id)}
-                aria-current={active ? "page" : undefined}
                 className={cn(
-                  'flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors',
-                  active
-                    ? 'text-primary font-bold'
-                    : 'text-muted-foreground hover:text-foreground',
+                  "relative flex flex-col items-center justify-center w-16 h-12 transition-colors",
+                  isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
                 )}
+                aria-label={item.label}
               >
-                <Icon
-                  className={cn('size-5', active && 'fill-primary/10')}
-                  strokeWidth={active ? 2.25 : 1.75}
-                  aria-hidden
-                />
-                <span>{item.label}</span>
+                <item.icon className={cn("mb-1", isActive ? "size-6" : "size-5")} strokeWidth={isActive ? 2.5 : 2} />
+                <span className={cn("text-[10px] font-semibold tracking-wide", isActive ? "opacity-100" : "opacity-0")}>{item.label}</span>
               </button>
             );
           })}
         </div>
       </nav>
-
-      {showNotifications && <NotificationsSheet notifs={notifs} onClose={() => setShowNotifications(false)} loading={notificationsLoading} />}
-    </div>
+      {showNotifications && (
+        <NotificationsSheet notifs={notifs} onClose={() => setShowNotifications(false)} loading={notificationsLoading} />
+      )}
+          </div>
+        )}
+      </AnimatePresence>
+    </LayoutGroup>
   );
 }

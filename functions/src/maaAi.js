@@ -247,6 +247,7 @@ function buildGeminiPrompt(today) {
     "Do not parse multiple intents. Return unsupported if the message asks for more than one action.",
     "Reason should be short and based only on the customer's words.",
     "Confidence must be a number from 0 to 1.",
+    "If the customer asks for extra chapati, less spicy, rating meals, payment, or subscription questions, set intent to 'unsupported' and add a 'message' field with a polite, short explanation that they should contact the manager directly for this.",
   ].join(" ");
 }
 
@@ -364,7 +365,7 @@ function validateExtraction(raw, sourceText, today) {
   if (!ALLOWED_INTENTS.includes(intent)) {
     return {
       supported: false,
-      message: UNSUPPORTED_MESSAGE,
+      message: data.message || UNSUPPORTED_MESSAGE,
     };
   }
 

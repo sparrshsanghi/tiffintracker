@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import {
   DAYS, TODAY_IDX, THIS_WEEK, INP, emptyWeek,
-  weekDates, weekRange, getMonday
+  weekDates, weekRange
 } from "./managerUtils.js";
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -68,9 +68,7 @@ export function MenuPlanner(props) {
       msg += "\n\n";
     });
     return msg.trim();
-  }, [wk, weekData]);
-
-  function buildWaMsg() { return waMsg; }
+  }, [wk, weekData, dates]);
 
   var filled = weekData.filter(function(d){return d&&d.items.length>0;}).length;
 
@@ -78,21 +76,23 @@ export function MenuPlanner(props) {
     <div className="space-y-4">
       {tk ? <div className="bg-green-600 text-white text-sm font-bold text-center py-2.5 rounded-2xl">{tk}</div> : null}
 
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-stone-100">
+      <div className="mgr-card p-4">
         <div className="flex items-center justify-between">
           <button onClick={function(){setWk(function(w){var d=new Date(w);d.setDate(d.getDate()-7);return d.toISOString().slice(0,10);});setEd(null);}}
-            className="w-10 h-10 rounded-xl bg-stone-50 text-stone-600 font-black text-xl hover:bg-stone-100 flex items-center justify-center">&#8249;</button>
+            aria-label="Previous week"
+            className="w-10 h-10 rounded-xl bg-secondary text-foreground font-black text-xl hover:bg-accent flex items-center justify-center mgr-press">&#8249;</button>
           <div className="text-center">
-            <p className="font-black text-stone-800 text-sm">{weekRange(wk)}</p>
-            {isCur && <span className="text-xs text-orange-600 font-bold">Current Week</span>}
+            <p className="font-black text-foreground text-sm">{weekRange(wk)}</p>
+            {isCur && <span className="text-xs text-primary font-bold">Current Week</span>}
           </div>
           <button onClick={function(){setWk(function(w){var d=new Date(w);d.setDate(d.getDate()+7);return d.toISOString().slice(0,10);});setEd(null);}}
-            className="w-10 h-10 rounded-xl bg-stone-50 text-stone-600 font-black text-xl hover:bg-stone-100 flex items-center justify-center">&#8250;</button>
+            aria-label="Next week"
+            className="w-10 h-10 rounded-xl bg-secondary text-foreground font-black text-xl hover:bg-accent flex items-center justify-center mgr-press">&#8250;</button>
         </div>
         <div className="mt-3">
-          <div className="flex justify-between text-xs text-stone-400 mb-1"><span>Menu planned</span><span>{filled}/7 days</span></div>
-          <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-orange-400 to-amber-400 rounded-full transition-all" style={{width:Math.round(filled/7*100)+"%"}}></div>
+          <div className="flex justify-between text-xs text-muted-foreground mb-1"><span>Menu planned</span><span>{filled}/7 days</span></div>
+          <div className="mgr-track h-1.5">
+            <div className="mgr-fill transition-all" style={{width:Math.round(filled/7*100)+"%"}}></div>
           </div>
         </div>
       </div>
@@ -104,7 +104,7 @@ export function MenuPlanner(props) {
         var hasItems = day.items.length>0;
         var dLabel = new Date(date).toLocaleDateString("en-IN",{day:"numeric",month:"short"});
         return (
-          <div key={date} className={"bg-white rounded-2xl shadow-sm border overflow-hidden " + (isToday?"border-orange-400":"border-stone-100")}>
+          <div key={date} className={"mgr-card overflow-hidden " + (isToday ? "border-l-4 border-l-primary" : "")}>
             {isToday && <div className="h-1 bg-orange-500"></div>}
             <div className="p-4">
               <div className="flex justify-between items-start mb-2">
@@ -117,8 +117,8 @@ export function MenuPlanner(props) {
                 </div>
                 {!isEditing && (
                   <div className="flex gap-1.5">
-                    {hasItems && <button onClick={function(){clearDay(i);}} className="text-xs font-bold text-red-400 bg-red-50 px-2 py-1 rounded-lg">&#10005;</button>}
-                    <button onClick={function(){openEdit(i);}} className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100">{hasItems?"Edit":"+ Add"}</button>
+                    {hasItems && <button onClick={function(){clearDay(i);}} aria-label="Clear menu for day" className="text-xs font-bold text-destructive bg-[oklch(0.97_0.03_27)] px-2 py-1 rounded-lg mgr-press">&#10005;</button>}
+                    <button onClick={function(){openEdit(i);}} className="text-xs font-bold text-primary bg-accent px-3 py-1.5 rounded-lg hover:bg-accent/80 mgr-press">{hasItems?"Edit":"+ Add"}</button>
                   </div>
                 )}
               </div>

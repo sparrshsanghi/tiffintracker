@@ -50,10 +50,10 @@ export function DeliveryTab({
 
       {/* All-done celebration */}
       {allDelivered && (
-        <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+        <div className="mgr-card p-4 text-center">
           <div className="text-3xl mb-1">🎉</div>
-          <p className="font-black text-green-800">All Delivered!</p>
-          <p className="text-sm text-green-600 mt-0.5">Every customer's tiffin has been delivered today.</p>
+          <p className="font-black text-success">All Delivered!</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Every customer&apos;s tiffin has been delivered today.</p>
         </div>
       )}
 
@@ -63,7 +63,7 @@ export function DeliveryTab({
         var st = DST[order.status];
         var time = fmtTimestamp(order.updatedAt);
         return (
-          <div key={order.id} className={"bg-white rounded-2xl shadow-sm border overflow-hidden " + (order.status === "delivered" ? "border-green-200" : "border-stone-100")}>
+          <div key={order.id} className={"mgr-card mgr-card-hover overflow-hidden " + (order.status === "delivered" ? "border-l-4 border-l-success" : "")}>
             <div className={"h-1.5 " + st.bar}></div>
             <div className="p-4">
               <div className="flex justify-between items-start">

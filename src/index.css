@@ -1230,3 +1230,242 @@
 .ms-fade-in {
   animation: ms-fade-in 0.4s ease-out both;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   MANAGER DASHBOARD DESIGN SYSTEM
+   Premium presentation layer for the owner-facing dashboard.
+   All classes are prefixed `mgr-` and do not affect the customer UI.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Soft tints derived from the core palette (used as calm surface fills) */
+  --primary-soft: oklch(0.955 0.028 55);
+  --success-soft: oklch(0.955 0.028 148);
+  --destructive-soft: oklch(0.96 0.022 27);
+  --gold-soft: oklch(0.965 0.03 85);
+}
+
+/* ── Shell ──────────────────────────────────────────────────────────────────── */
+.manager-shell {
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.7), transparent 36%),
+    radial-gradient(circle at top right, rgba(240, 226, 203, 0.85), transparent 32%),
+    linear-gradient(180deg, #f7f1e7 0%, #f4ede1 100%);
+  scroll-behavior: smooth;
+}
+
+.manager-shell button,
+.manager-shell a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.manager-shell button:focus-visible,
+.manager-shell a:focus-visible,
+.manager-shell input:focus-visible,
+.manager-shell textarea:focus-visible,
+.manager-shell select:focus-visible {
+  outline: 3px solid rgba(143, 63, 35, 0.24);
+  outline-offset: 2px;
+}
+
+/* ── Surfaces ───────────────────────────────────────────────────────────────── */
+.mgr-card {
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(255, 250, 242, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: var(--shadow-rest);
+  transition:
+    box-shadow var(--duration-medium) var(--ease-standard),
+    transform var(--duration-medium) var(--ease-standard);
+}
+
+.mgr-card-hover:hover {
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-2px);
+}
+
+.mgr-hero {
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 85% -20%, rgba(255, 214, 165, 0.5), transparent 55%),
+    radial-gradient(circle at 0% 110%, rgba(255, 234, 210, 0.55), transparent 45%),
+    linear-gradient(160deg, #fffdf8 0%, #fdf5e9 100%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 20px 48px rgba(84, 52, 24, 0.1);
+}
+
+.mgr-inset {
+  border-radius: 16px;
+  background: rgba(84, 52, 24, 0.035);
+  border: 1px solid rgba(84, 52, 24, 0.05);
+}
+
+/* ── Buttons & interactions ─────────────────────────────────────────────────── */
+.mgr-press {
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+.mgr-press:active {
+  transform: scale(0.97);
+}
+
+.mgr-btn-primary {
+  background: linear-gradient(180deg, oklch(0.58 0.155 35), oklch(0.52 0.155 35));
+  color: var(--primary-foreground);
+  box-shadow: 0 8px 20px rgba(160, 74, 34, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.mgr-btn-primary:hover {
+  box-shadow: 0 10px 26px rgba(160, 74, 34, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.mgr-btn-success {
+  background: linear-gradient(180deg, oklch(0.56 0.11 148), oklch(0.5 0.11 148));
+  color: var(--success-foreground);
+  box-shadow: 0 8px 20px rgba(46, 96, 52, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* ── Navigation ─────────────────────────────────────────────────────────────── */
+.mgr-nav {
+  background: rgba(255, 253, 248, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(84, 52, 24, 0.07);
+  box-shadow: 0 8px 24px rgba(84, 52, 24, 0.05);
+}
+
+.mgr-nav-item {
+  position: relative;
+  transition: color var(--duration-medium) var(--ease-standard);
+}
+
+.mgr-nav-item::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 20px;
+  height: 3px;
+  border-radius: 999px 999px 0 0;
+  background: var(--primary);
+  transform: translateX(-50%) scaleX(0);
+  transform-origin: center;
+  transition: transform var(--duration-medium) var(--ease-emphasis);
+}
+
+.mgr-nav-item[aria-selected="true"]::after {
+  transform: translateX(-50%) scaleX(1);
+}
+
+.mgr-nav-badge {
+  animation: mgr-badge-pop var(--duration-slow) var(--ease-emphasis) both;
+}
+
+/* ── Progress ───────────────────────────────────────────────────────────────── */
+.mgr-track {
+  background: rgba(84, 52, 24, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.mgr-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), oklch(0.62 0.13 35));
+  transition: width 0.8s var(--ease-emphasis);
+}
+
+.mgr-ring-fg {
+  transition: stroke-dashoffset 0.9s var(--ease-emphasis);
+}
+
+/* ── Entrances & moments ────────────────────────────────────────────────────── */
+.mgr-enter {
+  animation: ms-fade-up var(--duration-entrance) var(--ease-emphasis) both;
+}
+
+.mgr-enter-1 { animation-delay: var(--delay-1); }
+.mgr-enter-2 { animation-delay: var(--delay-2); }
+.mgr-enter-3 { animation-delay: var(--delay-3); }
+.mgr-enter-4 { animation-delay: var(--delay-4); }
+.mgr-enter-5 { animation-delay: 320ms; }
+.mgr-enter-6 { animation-delay: 380ms; }
+
+.mgr-celebrate {
+  animation: mgr-celebrate 0.7s var(--ease-emphasis) both;
+}
+
+.mgr-pulse-dot {
+  animation: mgr-pulse 2.2s var(--ease-soft) infinite;
+}
+
+.mgr-status-swap {
+  animation: mgr-status-swap var(--duration-slow) var(--ease-emphasis) both;
+}
+
+.mgr-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(84, 52, 24, 0.06);
+  border-radius: 12px;
+}
+
+.mgr-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: mgr-shimmer var(--duration-shimmer) ease-in-out infinite;
+}
+
+@keyframes mgr-badge-pop {
+  0% { transform: scale(0); }
+  70% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+@keyframes mgr-celebrate {
+  0% { transform: scale(0.9); opacity: 0; }
+  60% { transform: scale(1.02); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes mgr-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+@keyframes mgr-status-swap {
+  0% { transform: translateY(4px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes mgr-shimmer {
+  100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mgr-enter,
+  .mgr-celebrate,
+  .mgr-nav-badge,
+  .mgr-status-swap,
+  .mgr-pulse-dot,
+  .mgr-skeleton::after {
+    animation: none;
+  }
+
+  .mgr-card,
+  .mgr-card-hover,
+  .mgr-press,
+  .mgr-fill,
+  .mgr-ring-fg,
+  .mgr-nav-item::after {
+    transition: none;
+  }
+}

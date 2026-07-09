@@ -44,7 +44,7 @@ export function TodayHero({ customer, deliveryCopy, pauseText, mainMeal, mealCou
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div className="rounded-[22px] bg-white/85 px-4 py-3 shadow-[0_10px_24px_rgba(92,62,31,0.05)]">
-                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-stone-400">Today's meal</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-stone-400">Today&apos;s meal</p>
                 <p className="mt-1 text-sm font-black text-stone-900">{mainMeal}</p>
               </div>
               <div className="rounded-[22px] bg-white/85 px-4 py-3 shadow-[0_10px_24px_rgba(92,62,31,0.05)]">

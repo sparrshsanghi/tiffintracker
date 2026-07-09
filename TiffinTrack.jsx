@@ -1,9 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import {
-  MapPin, Package, CheckCircle2, ChevronDown, ChevronUp,
-  Phone, Bell, CreditCard, Home, Building2, UtensilsCrossed,
-  Users, AlertCircle
-} from "lucide-react";
+
 import {
   collection,
   doc,
@@ -14,8 +10,7 @@ import {
   deleteField,
   runTransaction,
   writeBatch,
-  getDocs,
-  getDoc
+  getDocs
 } from "firebase/firestore";
 import {
   signInWithCustomToken,
@@ -23,7 +18,6 @@ import {
   signOut
 } from "firebase/auth";
 import { CustomerView, BrandLogo } from "./src/Views.jsx";
-import { getDefaultFood } from "./src/components/customer/customerUtils.js";
 import { AuthScreen } from "./src/components/auth/AuthScreen.jsx";
 import { OnboardingScreen } from "./src/components/onboarding/OnboardingScreen.jsx";
 import { MenuPlanner } from "./src/components/manager/MenuPlanner.jsx";
@@ -38,16 +32,12 @@ import { SettingsTab } from "./src/components/manager/SettingsTab.jsx";
 import { DeleteConfirmModal } from "./src/components/manager/DeleteConfirmModal.jsx";
 import { CustomerFormModal } from "./src/components/manager/CustomerFormModal.jsx";
 import {
-  TODAY, CUR_MON, TODAY_STR, DATE_STR, TODAY_IDX, DAYS,
-  THIS_WEEK, fmt, waTo, makeOrders, emptyWeek, DST, PST, INP,
-  getMonday, weekDates, weekRange, monLabel, prevMon, nextMon
+  TODAY, CUR_MON, DATE_STR, TODAY_IDX,
+  THIS_WEEK, fmt, makeOrders, monLabel
 } from "./src/components/manager/managerUtils.js";
 import {
   db, auth, BUSINESS_ID,
   confirmPaymentCallable,
-  startOnboardingCallable,
-  saveOnboardingDraftCallable,
-  confirmOnboardingCallable,
   listOnboardingQueueCallable,
   resolveOnboardingApprovalCallable,
   extractMaaAiIntentCallable,
@@ -61,7 +51,7 @@ import {
 } from "./src/firebase";
 
 // Browser-compatible SHA-256 hash helper
-async function hashPIN(pin) {
+async function _hashPIN(pin) {
   const encoder = new TextEncoder();
   const data = encoder.encode(String(pin));
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -79,8 +69,8 @@ var SEED_C = import.meta.env.DEV ? [
   { id:"dev1", name:"Priya Sharma",  phone:"9876543210", address:"Sector 5, Near Park",   plan:"monthly", food:"Veg Thali + Roti",      rate:2500, active:true },
   { id:"dev2", name:"Rahul Verma",   phone:"9812345678", address:"MG Road, Flat 3B",      plan:"daily",   food:"Dal Chawal + Sabzi",    rate:3000, active:true },
 ] : [];
-var SEED_P = {};
-var SEED_MENU = {};
+var _SEED_P = {};
+var _SEED_MENU = {};
 
 // AuthScreen, OnboardingScreen, and MenuPlanner have been extracted to src/components/
 
@@ -92,9 +82,9 @@ function ManagerView(props) {
   var stats=props.stats, payStats=props.payStats;
   var getPaid=props.getPaid, getPayStat=props.getPayStat;
   var addPayment=props.addPayment, removePayment=props.removePayment;
-  var resetDay=props.resetDay, advanceStatus=props.advanceStatus;
+  var _resetDay=props.resetDay, advanceStatus=props.advanceStatus;
   var curMonth=props.curMonth;
-  var setMgrPin=props.setMgrPin;
+  var _setMgrPin=props.setMgrPin;
   var onboardingPromptVersion=props.onboardingPromptVersion || "onboarding.v1";
   var saveOnboardingPromptVersion=props.saveOnboardingPromptVersion;
   var managerPin=props.managerPin || "";
@@ -127,6 +117,7 @@ function ManagerView(props) {
   var aiqBusyS=useState(""); var aiActionBusyId=aiqBusyS[0],setAiActionBusyId=aiqBusyS[1];
   var oqAutoLoadRef=useRef(false);
   
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(function() { setWg(props.whatsappGroup||""); }, [props.whatsappGroup]);
   useEffect(function() { setOnboardingVersion(onboardingPromptVersion); }, [onboardingPromptVersion]);
   useEffect(function() {
@@ -140,7 +131,6 @@ function ManagerView(props) {
       loadAiInbox(managerPin);
     }
   }, [managerPin, managerAuthenticated]);
-
   useEffect(function() {
     function onHash() {
       var h = window.location.hash.replace("#", "");
@@ -155,6 +145,7 @@ function ManagerView(props) {
     window.addEventListener("hashchange", onHash);
     return function() { window.removeEventListener("hashchange", onHash); };
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   function setTab(t) {
     if (window.history.pushState) window.history.pushState(null, null, '#' + t);
@@ -177,6 +168,7 @@ function ManagerView(props) {
       if(s==="paid")nP++; else if(s==="partial")nPart++; else nU++;
     });
     return {due:due,col:col,nP:nP,nPart:nPart,nU:nU,pct:due>0?Math.round(col/due*100):0};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, payments, payMonth]);
 
   function openAdd() { setEditId(null); setForm({name:"",phone:"",address:"",group:"",plan:"daily",food:"",rate:"",deliveryOrder:"", paused:false, pauseFrom:"", pauseTo:""}); setShowForm(true); }
@@ -333,6 +325,7 @@ function ManagerView(props) {
       var s = getPayStat(c.id, payMonth, c.rate);
       return s === payFilter;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, payments, payMonth, payFilter]);
 
   var TABS = [
@@ -346,8 +339,13 @@ function ManagerView(props) {
   ];
 
   return (
-    <div className="min-h-screen bg-orange-50" style={{fontFamily:"system-ui,sans-serif"}}>
-      <ManagerHeader stats={stats} />
+    <div className="min-h-screen bg-background" style={{fontFamily:"system-ui,sans-serif"}}>
+      <ManagerHeader
+        stats={stats}
+        payStats={payStats}
+        pendingApprovals={onboardingQueue.length + aiActionQueue.length}
+        customerCount={customers.filter(function(c){return c.active !== false;}).length}
+      />
 
       <ManagerNav tabs={TABS} active={tab} onTab={setTab} />
 
@@ -482,14 +480,14 @@ export default function App() {
   const [onboardingPromptVersion, setOnboardingPromptVersion] = useState("onboarding.v1");
   const [onboardingPhone, setOnboardingPhone] = useState("");
 
-  const [mgrPinHash, setMgrPinHash] = useState("");
+  const [_mgrPinHash, setMgrPinHash] = useState("");
   const [mgrSessionPin, setMgrSessionPin] = useState("");
 
   const [mgrInput, setMgrInput] = useState("");
   const [mgrErr, setMgrErr] = useState(false);
   const [phoneInput, setPhoneInput] = useState("");
   const [phonErr, setPhonErr] = useState(false);
-  const [custAttempts, setCustAttempts] = useState(0);
+  const [_custAttempts, setCustAttempts] = useState(0);
   const [custLockedUntil, setCustLockedUntil] = useState(0);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
@@ -523,7 +521,7 @@ export default function App() {
   const [mgrLockMsg, setMgrLockMsg] = useState("");
 
   // ─── Firebase Custom Token Auth ───────────────────────────────────────────
-  const [authReady, setAuthReady] = useState(false);
+  const [_authReady, setAuthReady] = useState(false);
   const [firebaseUid, setFirebaseUid] = useState(null);
   const [authClaims, setAuthClaims] = useState(null);
   const [claimRole, setClaimRole] = useState("");
@@ -598,6 +596,7 @@ export default function App() {
       }
     });
     return () => unsubAuth();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ─── Real-time Sync ────────────────────────────────────────────────────────
@@ -930,7 +929,7 @@ export default function App() {
   async function loginCust() {
     const now = Date.now();
     if (now < custLockedUntil) {
-      const secs = Math.ceil((custLockedUntil - now) / 1000);
+      const _secs = Math.ceil((custLockedUntil - now) / 1000);
       setPhonErr(true);
       return;
     }
@@ -1077,14 +1076,28 @@ export default function App() {
 
   async function loadCustomerTimeline(customerId) {
     if (!customerId) return;
+    const cacheKey = `timeline_${customerId}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        setCustomerTimeline(JSON.parse(cached));
+      }
+    } catch (e) {
+      console.error("Failed to parse cached timeline:", e);
+    }
+
     setCustomerTimelineLoading(true);
     try {
       const result = await listCustomerTimelineCallable({ customerId: String(customerId) });
       const items = result.data?.items || [];
       setCustomerTimeline(items);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(items));
+      } catch (e) {
+        console.error("Failed to save timeline to cache:", e);
+      }
     } catch (error) {
       console.error("Timeline sync failed:", error);
-      setCustomerTimeline([]);
     } finally {
       setCustomerTimelineLoading(false);
     }
@@ -1134,7 +1147,7 @@ export default function App() {
         await updateDoc(orderDocRef, {
           [id]: deleteField()
         });
-      } catch (e) {}
+      } catch (e) { /* order doc may not exist yet – safe to ignore */ }
     }
 
     // Add or update remaining customers
@@ -1149,7 +1162,7 @@ export default function App() {
             await updateDoc(orderDocRef, {
               [docId]: deleteField()
             });
-          } catch (e) {}
+          } catch (e) { /* order doc may not exist yet – safe to ignore */ }
         } else {
           await setDoc(orderDocRef, {
             [docId]: {
@@ -1251,6 +1264,7 @@ export default function App() {
       nUnpaid: nUnpaid,
       pct: due > 0 ? Math.round((collected / due) * 100) : 0
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cust, pays]);
 
   const todayMenu = menu[THIS_WEEK] ? menu[THIS_WEEK][TODAY_IDX] : null;
